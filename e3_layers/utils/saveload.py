@@ -180,10 +180,11 @@ def atomic_write(
 
 def save_file(
     item,
-    supported_formats: dict,
     filename: str,
     enforced_format: str = None,
     blocking: bool = True,
+    supported_formats: dict=dict(torch=["pth", "pt"], yaml=["yaml", "yml"],
+                                 json=["json"], pickle=["pickle", "pkl"], npz=["npz"])
 ):
     """
     Save file. It can take yaml, json, pickle, json, npz and torch save
@@ -241,7 +242,9 @@ def save_file(
     return filename
 
 
-def load_file(supported_formats: dict, filename: str, enforced_format: str = None):
+def load_file(filename: str, enforced_format: str = None,
+              supported_formats: dict=dict(torch=["pth", "pt"], yaml=["yaml", "yml"],
+                                           json=["json"], pickle=["pickle", "pkl"], npz=["npz"])):
     """
     Load file. Current support form
     """

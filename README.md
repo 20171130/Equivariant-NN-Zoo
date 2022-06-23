@@ -101,7 +101,7 @@ It is both dictionary-like (indexed by keys) and list-like (indexed by (list of)
 The key `_n_graphs`, `_n_nodes`, `_node_segement`, `_n_edges`, and `_edge_segement` are reserved for separating the concatenated tensors since no padding is used.
 The key `_rotation_matrix` is reserved for equivariance tests. Do not override them with keys in your dataset.
 
-## A Batch Backed by an HDF5 File
+## Creating Datasets
 The `e3_layers.data.CondensedDataset` inherits from `e3_layers.data.Batch`.
 Refer to `data.ipynb` for the scripts to convert various data formats to the HDF5 format that this repository uses.
 
