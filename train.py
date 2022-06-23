@@ -68,6 +68,7 @@ def run(rank, config):
                 name=f"{FLAGS.name}_{FLAGS.seed}",
                 resume="allow",
                 id=run_id,
+                dir = FLAGS.workdir,
                 settings=wandb.Settings(),
             )
         else:

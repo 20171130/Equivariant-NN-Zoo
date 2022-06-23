@@ -22,6 +22,8 @@ class Module(torch.nn.Module):
                 irreps, custom_keys = value, key
             elif isinstance(value, list) or isinstance(value, tuple):
                 irreps, custom_keys = value[0], value[1:]
+            else: # value is None
+                continue 
             if key in output_keys:
                 self.irreps_out[key] = Irreps(irreps)
                 self.output_key_mapping[key] = custom_keys

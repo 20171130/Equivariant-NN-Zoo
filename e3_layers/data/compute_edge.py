@@ -191,6 +191,7 @@ def computeEdgeIndex(
     pos = torch.as_tensor(pos, dtype=torch.get_default_dtype())
 
     lst = []
+    n_edges = []
     cnt = 0
     if '_n_nodes' in batch:
         for i, n in enumerate(batch['_n_nodes']):
@@ -203,6 +204,7 @@ def computeEdgeIndex(
                 )
             cnt += n
             lst.append(edge_index)
+            n_edges.append(edge_index.shape[-1])
         edge_index = torch.cat(lst, dim=-1)
     else:
         edge_index, _, _ = neighbor_list_and_relative_vec(
@@ -211,10 +213,12 @@ def computeEdgeIndex(
                 self_interaction=False,
                 strict_self_interaction=strict_self_interaction
             )
+        n_edges.append(edge_index.shape[-1])
     edge_index = edge_index.to(pos.device)
-
+    n_edges = torch.tensor(n_edges).to(pos.device)
     attrs = batch.attrs
     attrs["_n_edges"] = ('graph', '1x0e')
     batch["edge_index"] = edge_index
+    batch["_n_edges"] = n_edges
 
     return batch

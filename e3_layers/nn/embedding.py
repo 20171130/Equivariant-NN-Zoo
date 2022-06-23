@@ -4,6 +4,7 @@ from e3nn import o3
 from e3nn.util.jit import compile_mode
 
 from .sequential import Module
+from .pointwise import PointwiseLinear
 import torch
 import torch.nn.functional
 
@@ -201,7 +202,7 @@ class SphericalEncoding(Module):
 
 
 @compile_mode("script")
-class RadialBasisEdgeEncoding(Module):
+class RadialBasisEncoding(Module):
     def __init__(
         self,
         r_max,
@@ -210,13 +211,16 @@ class RadialBasisEdgeEncoding(Module):
         irreps_out,
         basis=BesselBasis,
         cutoff=PolynomialCutoff,
-        edge_length="1x0e",
-        edge_attr=None,
+        real="1x0e",
+        input_features=None,
     ):
+        """
+        Radial basis embedding of a positive real number. Optionally composes the embedding with input features.
+        """
         super().__init__()
         self.init_irreps(
-            edge_length=edge_length,
-            edge_attr=edge_attr,
+            real=real,
+            input_features=input_features,
             radial_embedding=irreps_out,
             output_keys=["radial_embedding"],
         )
@@ -226,25 +230,77 @@ class RadialBasisEdgeEncoding(Module):
         self.cutoff = cutoff(r_max, p=polynomial_degree)
 
     def forward(self, data):
-        self.inputKeyMap(data)
-        edge_attr = None
-        edge_length = data["edge_length"]
-        if "edge_attr" in data:
-            edge_attr = data["edge_attr"]
-        edge_length_embedded = (
-            self.basis(edge_length) * self.cutoff(edge_length)[:, None]
+        input = self.inputKeyMap(data)
+        input_features = None
+        real = input['real']
+        if "input_features" in input:
+            input_features = input["input_features"]
+        embedded = (
+            self.basis(real) * self.cutoff(real)[:, None]
         )
-        if not edge_attr is None:
-            edge_length_embedded = edge_length_embedded * edge_attr
-        edge_length_embedded = edge_length_embedded
+        if not input_features is None:
+            embedded = embedded * input_features
+        is_per = input.attrs['real'][0]
         data.attrs.update(
             self.outputKeyMap(
-                {"radial_embedding": ("edge", self.irreps_out["radial_embedding"])}
+                {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
             )
         )
-        data.update(self.outputKeyMap({"radial_embedding": edge_length_embedded}))
+        data.update(self.outputKeyMap({"radial_embedding": embedded}))
         return data
+      
+@compile_mode("script")
+class GraphFeatureEmbedding(Module):
+    def __init__(
+        self, graph=None, edge_in=None, node_in=None, edge_out=None, node_out=None
+    ):
+        """
+        Broadcast graph features into edge or node features.
+        """
+        super().__init__()
+        self.init_irreps(
+            graph = graph,
+            edge_in = edge_in, edge_out=edge_out,
+            node_in = node_in, node_out=node_out,
+            output_keys=["edge_out", "node_out"],
+        )
+        if 'edge_out' in self.irreps_out:
+            irreps_in = self.irreps_in['edge_in'] + self.irreps_in['graph']
+            self.linear_edge = PointwiseLinear(irreps_in, self.irreps_out['edge_out'])
+        if 'node_out' in self.irreps_out:
+            irreps_in = self.irreps_in['node_in'] + self.irreps_in['graph']
+            self.linear_node = PointwiseLinear(irreps_in, self.irreps_out['node_out'])
 
+    def forward(self, data):
+        input = self.inputKeyMap(data)
+        
+        if 'edge_out' in self.irreps_out:
+            device = input['graph'].device
+            feature = input['graph'][data.edgeSegment()]
+            if 'edge_in' in self.irreps_in:
+                feature = torch.cat([input['edge_in'], feature], dim=1)
+            feature = self.linear_edge(feature)
+            data.attrs.update(
+                self.outputKeyMap(
+                    {"edge_out": ("edge", self.irreps_out["edge_out"])}
+                )
+            )
+            data.update(self.outputKeyMap({"edge_out": feature}))
+          
+        if 'node_out' in self.irreps_out:
+            device = input['graph'].device
+            feature = input['graph'][data.nodeSegment()]
+            if 'node_in' in self.irreps_in:
+                feature = torch.cat([input['node_in'], feature], dim=1)
+            feature = self.linear_node(feature)
+            data.attrs.update(
+                self.outputKeyMap(
+                    {"node_out": ("node", self.irreps_out["node_out"])}
+                )
+            )
+            data.update(self.outputKeyMap({"node_out": feature}))
+        
+        return data
 
 @compile_mode("script")
 class OneHotEncoding(Module):

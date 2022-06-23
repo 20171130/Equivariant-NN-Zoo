@@ -1,8 +1,9 @@
 from .sequential import SequentialGraphNetwork
 from .embedding import (
     OneHotEncoding,
-    RadialBasisEdgeEncoding,
+    RadialBasisEncoding,
     SphericalEncoding,
+    GraphFeatureEmbedding
 )
 from .pointwise import PointwiseLinear, ResBlock, TensorProductExpansion
 from .message_passing import MessagePassing, FactorizedConvolution

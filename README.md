@@ -1,9 +1,10 @@
 Author: Hang'rui Bi (hangruibi@outlook.com)
 
 Thie repository provides high-level neural network layers for constructing SOTA E3-equivariant neural networks based on [e3nn](https://e3nn.org/).
-It also provides examples for several applications, such as potential energy surface modeling, dipole prediction, and hamiltonian prediction.
+It also provides examples for several applications, such as potential energy surface modeling, dipole prediction, hamiltonian prediction, as well as [score-based](https://yang-song.github.io/blog/2021/score/) conformation generation.
 Some codes are modified from [Nequip](https://github.com/mir-group/nequip).
 The notebook for infer matrix transformation from data is modified from scripts written by Mario Geiger.
+The script `sde.py` is modified from https://github.com/yang-song/score_sde_pytorch.
 
 # Installation
 Once the environment is prepared, you can run this repository. There is no need to install this repository itself.
@@ -80,6 +81,14 @@ For predicting multipoles of higher degrees, you should decompose them into irre
 Run `python3 train.py --config config_hamiltonian`. 
 Notice that this config only works for H2O computed in ORCA convention.
 The accuracy is comprable (MAE 1.7e-5 Hatree) to [PhiSNet](https://proceedings.neurips.cc/paper/2021/hash/78f1893678afbeaa90b1fa01b9cfb860-Abstract.html) on the water dataset it used.
+## Score Based Generative Model (VP-SDE continous)
+First, clone https://github.com/yang-song/score_sde_pytorch and add it to your environment variable `PYTHONPATH`.
+Then, you need to compute the std of the positions and fill `<config>.data_config.std`.
+Run
+```
+python3 sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py --e3_config config_diffusion
+```
+The script assumes there is a tensor named `pos` and reserves the key `t` for time and `species` for molecule/atom/residual type.
 
 # Model Interface and Data Format
 The input and output of all modules in this repository are instances of `e3_layers.data.Data`.

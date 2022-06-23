@@ -153,6 +153,15 @@ class Batch(Data):
             batch = torch.tensor(batch)
             self.data["_node_segment"] = batch
         return self.data["_node_segment"]
+      
+    def edgeSegment(self):
+        if not "_edge_segment" in self.data:
+            batch = []
+            for i, n in enumerate(self["_n_edges"]):
+                batch += [i] * n
+            batch = torch.tensor(batch)
+            self.data["_edge_segment"] = batch
+        return self.data["_edge_segment"]
 
     def __getitem__(self, idx):
         if isinstance(idx, str):
@@ -169,13 +178,13 @@ class Batch(Data):
             )
         else:
             self.data[idx] = item
-            if idx == "_n_nodes" or idx == "_n_edges":
+            if idx in ('_n_nodes', '_n_edges'):
                 self.computeCumsums()
 
     def update(self, other):
         for key, value in other.items():
             self[key] = value
-        if "_n_nodes" in other or "_n_edges" in other:
+        if '_n_nodes' in other or '_n_edges' in other:
             self.computeCumsums()
 
     def __len__(self):

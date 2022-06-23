@@ -49,10 +49,11 @@ def featureModel(
         "irreps_in": ("1x1o", "edge_vector"),
     }
     layers["radial_basis"] = {
-        "module": RadialBasisEdgeEncoding,
+        "module": RadialBasisEncoding,
         "r_max": r_max,
         "trainable": True,
         "polynomial_degree": 6,
+        "real": ('1x0e', 'edge_length'),
         "irreps_out": (edge_radial, "edge_radial"),
     }
     layers["chemical_embedding"] = {
@@ -124,11 +125,12 @@ def addEdgeEmbedding(config, num_bond_types):
     layers = layers + config.layers
     
     layer = {
-        "module": RadialBasisEdgeEncoding,
+        "module": RadialBasisEncoding,
         "r_max": r_max,
         "trainable": True,
         "polynomial_degree": 6,
-        "edge_attr": (f"{n_dim}x0e", "edge_embedding"),
+        "input_features": (f"{n_dim}x0e", "edge_embedding"),
+        "real": ('1x0e', "edge_length"),
         "irreps_out": (edge_radial, "edge_radial"),
     }
     replace(layers, 'radial_basis', ('radial_basis', layer))
