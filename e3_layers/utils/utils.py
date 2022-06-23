@@ -75,7 +75,7 @@ def build(node, **kwargs):
     return func(*args, **kwargs)
 
 
-def pruneArgs(func=None, prefix="", **kwargs):
+def pruneArgs(_func=None, prefix="", **kwargs):
     if not prefix == "":
         args = {}
         for key, value in kwargs.items():
@@ -85,12 +85,12 @@ def pruneArgs(func=None, prefix="", **kwargs):
     else:
         args = kwargs
 
-    if not func is None:
-        arg_spec = inspect.getfullargspec(func)
+    if not _func is None:
+        arg_spec = inspect.getfullargspec(_func)
         if arg_spec.varkw:
             return args
         else:
-            pnames = inspect.signature(func).parameters
+            pnames = inspect.signature(_func).parameters
             return {key: args[key] for key in args if key in pnames}
     return args
 

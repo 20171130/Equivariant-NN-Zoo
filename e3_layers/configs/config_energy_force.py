@@ -2,11 +2,13 @@ from functools import partial
 from ..data import computeEdgeIndex
 from ml_collections.config_dict import ConfigDict
 import ase
-from .layer_configs import featureModel
-from ..nn import PointwiseLinear
+from .layer_configs import featureModel, addEnergyOutput, addForceOutput
 
 
 def get_config(spec=None):
+    """
+    Jointly predicting energy and forces.
+    """
     config = ConfigDict()
     data, model = ConfigDict(), ConfigDict()
     config.data_config = data
@@ -14,7 +16,7 @@ def get_config(spec=None):
 
     config.epoch_subdivision = 1
     config.learning_rate = 1e-2
-    config.batch_size = 256
+    config.batch_size = 64
 
     config.use_ema = True
     config.ema_decay = 0.99
@@ -25,35 +27,30 @@ def get_config(spec=None):
     config.early_stopping_patiences = {"validation_loss": 20}
     config.early_stopping_lower_bounds = {"LR": 1e-6}
 
-    config.loss_coeffs = {"dipole": [1e3, "MSELoss"]}
-    config.metrics_components = {"dipole": ["mae"]}
+    config.loss_coeffs = {"energy": [1e3, "PerAtomMSELoss"], "forces": ["MSELoss"]}
+    config.metrics_components = {"energy": ["mae"], "forces": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
-    config.lr_scheduler_patience = 2
+    config.lr_scheduler_patience = 1
     config.lr_scheduler_factor = 0.8
 
-    model.n_dim = 32
-    model.l_max = 2
-    model.r_max = 5.0
-    model.num_layers = 5
-    model.node_attrs = "16x0e"
-    num_types = 18
+    model.n_dim = 64
+    model.l_max = 3
+    model.r_max = 4.0
+    model.num_layers = 4
+    model.node_attrs = "8x0e"
+    num_types = 20
 
-    data.n_train = 811113
-    data.n_val = 202778
+    data.n_train = 800
+    data.n_val = 200
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = "multipole.hdf5"
+    data.path = "protein_E_and_F.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
+    data.key_map = {"species": "atom_types"}
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
-    
-    if spec and 'profiling' in spec:
-        data.n_train = 2048
-        data.n_val = 256
 
-    features = "+".join(
-        [f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)]
-    )
+    "+".join([f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)])
 
     edge_spherical = "1x0e+1x1o+1x2e"
     layer_configs = featureModel(
@@ -66,16 +63,15 @@ def get_config(spec=None):
         num_layers=model.num_layers,
         r_max=model.r_max,
     )
-    layer_configs.layers.append(
-        (
-            "dipole_output",
-            {
-                "module": PointwiseLinear,
-                "irreps_in": (features, "node_features"),
-                "irreps_out": (f"1x1o", "dipole"),
-            },
-        )
-    )
+    # cannot compute edge vectors during preprocessing since we need the gradients
+    shifts = [-3.7340, -2.1400, -3.7340, -3.7340, -3.7340, -3.7340, -7.8015, -4.2637,
+          -5.2706, -3.7340, -3.7340, -3.7340, -3.7340, -3.7340, -3.7340, -3.7340,
+          -3.8056, -3.7340, -3.7340, -3.7340]
+    # can be computed by calling  dataset.statistics(['energy-per-atom_types-mean_std'], stride=stride )
+    # refer to data.ipynb
+    layer_configs = addEnergyOutput(layer_configs, shifts, output_key='energy')
+    layer_configs = addForceOutput(layer_configs)
     model.update(layer_configs)
+    
 
     return config

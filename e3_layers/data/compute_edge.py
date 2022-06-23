@@ -120,7 +120,7 @@ def neighbor_list_and_relative_vec(
     return edge_index, shifts, cell_tensor
 
 
-def with_edge_vectors(data: Data, with_lengths: bool = True):
+def computeEdgeVector(data: Data, with_lengths: bool = True):
     """Compute the edge displacement vectors for a graph.
 
     If ``data.pos.requires_grad`` and/or ``data.cell.requires_grad``, this
@@ -129,6 +129,8 @@ def with_edge_vectors(data: Data, with_lengths: bool = True):
     Returns:
         Tensor [n_edges, 3] edge displacement vectors
     """
+    data.attrs["edge_vector"] = ("edge", "1x1o")
+    data.attrs["edge_length"] = ("edge", "1x0e")
     if "edge_vector" in data.keys():
         if with_lengths and "edge_length" not in data.keys():
             data["edge_length"] = torch.linalg.norm(data["edge_vector"], dim=-1)
@@ -172,13 +174,10 @@ def with_edge_vectors(data: Data, with_lengths: bool = True):
         return data
 
 
-def graph_from_coord(
+def computeEdgeIndex(
     batch,
     r_max: float = None,
-    self_interaction: bool = False,
     strict_self_interaction: bool = True,
-    cell=None,
-    pbc=None,
     **kwargs
 ):
     """Build neighbor graph from points, optionally with PBC.
@@ -186,66 +185,36 @@ def graph_from_coord(
     Args:
         pos (np.ndarray/torch.Tensor shape [N, 3]): node positions. If Tensor, must be on the CPU.
         r_max (float): neighbor cutoff radius.
-        cell (ase.Cell/ndarray [3,3], optional): periodic cell for the points. Defaults to ``None``.
-        pbc (bool or 3-tuple of bool, optional): whether to apply periodic boundary conditions to all or each of
-        the three cell vector directions. Defaults to ``False``.
-        self_interaction (bool, optional): whether to include self edges for points. Defaults to ``False``. Note
-        that edges between the same atom in different periodic images are still included. (See
-        ``strict_self_interaction`` to control this behaviour.)
-        strict_self_interaction (bool): Whether to include *any* self interaction edges in the graph, even if the
-        two instances of the atom are in different periodic images. Defaults to True, should be True for most
-        applications.
-        **kwargs (optional): other fields to add. Keys listed in ``AtomicDataDict.*_KEY` will be treated specially.
     """
-    if pbc is None:
-        if cell is not None:
-            raise ValueError(
-                "A cell was provided, but pbc weren't. Please explicitly probide PBC."
-            )
-        # there are no PBC if cell and pbc are not provided
-        pbc = False
-
-    if isinstance(pbc, bool):
-        pbc = (pbc,) * 3
-    else:
-        assert len(pbc) == 3
 
     pos = batch["pos"]
     pos = torch.as_tensor(pos, dtype=torch.get_default_dtype())
 
-    if not 'edge_index' in batch:
+    lst = []
+    cnt = 0
+    if '_n_nodes' in batch:
+        for i, n in enumerate(batch['_n_nodes']):
+            tmp = pos[cnt:cnt+n]
+            edge_index, _, _ = neighbor_list_and_relative_vec(
+                    pos=tmp,
+                    r_max=r_max,
+                    self_interaction=False,
+                    strict_self_interaction=strict_self_interaction
+                )
+            cnt += n
+            lst.append(edge_index)
+        edge_index = torch.cat(lst, dim=-1)
+    else:
         edge_index, _, _ = neighbor_list_and_relative_vec(
-            pos=pos,
-            r_max=r_max,
-            self_interaction=self_interaction,
-            strict_self_interaction=strict_self_interaction,
-            cell=cell,
-            pbc=pbc,
-        )
-
+                pos=pos,
+                r_max=r_max,
+                self_interaction=False,
+                strict_self_interaction=strict_self_interaction
+            )
+    edge_index = edge_index.to(pos.device)
 
     attrs = batch.attrs
     attrs["_n_edges"] = ('graph', '1x0e')
-    attrs["edge_vector"] = ("edge", "1x1o")
-    attrs["edge_length"] = ("edge", "1x0e")
     batch["edge_index"] = edge_index
-
-    """
-    attrs['pbc'] = ('graph', None)
-    attrs['cell'] = ('graph', '3x1o')
-    attrs['edge_cell_shift'] = ('edge', '1x1o')
-    batch['edge_cell_shift'] = edge_cell_shift
-    batch['cell'] = cell
-
-    # Make torch tensors for data:
-    if cell is not None:
-        batch['cell'] = cell.view(-1, 3, 3)
-        batch['edge_cell_shift'] = edge_cell_shift
-    if pbc is not None:
-        batch['pbc'] = torch.as_tensor(
-            pbc, dtype=torch.bool
-        ).view(3)
-    """
-    batch = with_edge_vectors(batch)
 
     return batch

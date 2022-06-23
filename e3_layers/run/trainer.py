@@ -190,13 +190,6 @@ class Trainer:
                 use_num_updates=self.ema_use_num_updates,
             )
 
-        if hasattr(self.model, "irreps_out"):
-            for key in self.train_on_keys:
-                if key not in self.model.outputKeyMap(self.model.irreps_out):
-                    raise RuntimeError(
-                        "Loss function include fields that are not predicted by the model"
-                    )
-
     @property
     def init_keys(self):
         return [

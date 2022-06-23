@@ -14,13 +14,13 @@ from copy import copy
 
 @compile_mode("script")
 class GradientOutput(Module):
-    def __init__(self, func, x, y, gradient, sign: float = 1.0, **kwargs):
+    def __init__(self, func, x, y, gradients, sign: float = 1.0, **kwargs):
         super().__init__()
         sign = float(sign)
         assert sign in (1.0, -1.0)
         self.sign = sign
-        self.init_irreps(x=x, y=y)
-        assert self.irreps_in["y"].max_degree == 0
+        self.init_irreps(x=x, y=y, gradients=gradients, output_keys=['gradients'])
+        assert self.irreps_in["y"].lmax == 0
         if isinstance(func, dict) or isinstance(func, ConfigDict):
             func = build(func, **kwargs)
         self.func = func

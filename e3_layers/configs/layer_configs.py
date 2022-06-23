@@ -4,6 +4,7 @@ from ..nn import *
 from ..utils import tp_path_exists, insertAfter, replace
 from e3nn.o3 import Irreps
 from copy import deepcopy
+from ..data import computeEdgeVector
 
 
 def featureModel(
@@ -36,6 +37,7 @@ def featureModel(
     config.node_attrs = node_attrs
 
     layers = {}
+    layers["edge_vector"] = computeEdgeVector
     layers["one_hot"] = {
         "module": OneHotEncoding,
         "irreps_out": (f"{num_types}x0e", "one_hot"),
@@ -134,7 +136,7 @@ def addEdgeEmbedding(config, num_bond_types):
     return config
 
 
-def addEnergyOutput(config, shifts):
+def addEnergyOutput(config, shifts, output_key='total_energy'):
     layers = {}
     layers["output_linear"] = {
         "module": PointwiseLinear,
@@ -156,21 +158,25 @@ def addEnergyOutput(config, shifts):
         "module": Pooling,
         "reduce": "sum",
         "irreps_in": ("1x0e", "energy"),
-        "irreps_out": ("1x0e", "total_energy"),
+        "irreps_out": ("1x0e", output_key),
     }
     config.layers += layers.items()
     return config
 
 
 def addForceOutput(config):
-    config = ConfigDict()
-    config.func = func_config
+    config = config.to_dict()
+    layers = config.pop('layers')
+    module = config.pop('module')
+    config = ConfigDict(config)
+    diff = ConfigDict()
+    config.func = {'module':module, 'layers':layers}
     config.update(
         {
             "module": GradientOutput,
             "x": ("1x1o", "pos"),
-            "y": ("1x1o", "energy"),
-            gradient: ("1x0e", "forces"),
+            "y": ("1x0e", "energy"),
+            'gradients': ("1x1o", "forces"),
         }
     )
     return config

@@ -1,5 +1,5 @@
 from functools import partial
-from ..data import computeEdges
+from ..data import computeEdgeIndex
 from ml_collections.config_dict import ConfigDict
 import ase
 from .layer_configs import featureModel, addMatrixOutput
@@ -132,7 +132,7 @@ def get_config(spec=None):
     data.path = "h2o.hdf5"
     data.key_map = {"species": "atom_types"}
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.preprocess = [partial(computeEdges, r_max=model.r_max)]
+    data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
 
     features = "+".join(
         [f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)]

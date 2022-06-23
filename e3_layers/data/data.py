@@ -61,7 +61,8 @@ class Data(object):
                     dim = e3nn.o3.Irreps(irreps).dim
                 else:
                     continue
-                self.data[key] = self.data[key].reshape(-1, dim)
+                if not len(self.data[key].shape)==2 and self.data[key].shape[-1] == dim:
+                    self.data[key] = self.data[key].view(-1, dim)
         self.computeSums()
 
     def computeSums(self):
