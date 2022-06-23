@@ -1,0 +1,130 @@
+import torch
+import torch.nn.functional
+from e3nn.o3 import Linear, Irreps, TensorProduct
+
+from .sequential import Module
+from ..utils import activations
+from e3nn.nn import NormActivation
+
+
+class PointwiseLinear(Module):
+    def __init__(self, irreps_in, irreps_out, biases=True, **kwargs):
+        super().__init__()
+        self.init_irreps(input=irreps_in, output=irreps_out, output_keys=["output"])
+        self.linear = Linear(
+            irreps_in=self.irreps_in["input"],
+            irreps_out=self.irreps_out["output"],
+            biases=biases,
+        )
+
+    def forward(self, data):
+        if isinstance(data, torch.Tensor):
+            input = data
+        else:
+            input = self.inputKeyMap(data)["input"]
+        output = self.linear(input)
+
+        if isinstance(data, torch.Tensor):
+            return output
+        else:
+            tmp = self.inputKeyMap(data.attrs)
+            data.attrs.update(
+                self.outputKeyMap(
+                    {"output": (tmp["input"][0], self.irreps_out["output"])}
+                )
+            )
+            data.update(self.outputKeyMap({"output": output}))
+            return data
+
+
+class TensorProductExpansion(Module):
+    def __init__(
+        self, left, right, output, instruction="uvu", internal_weight=True, **kwargs
+    ):
+        super().__init__()
+        self.init_irreps(left=left, right=right, output=output, output_keys=["output"])
+
+        irreps_mid = []
+        instructions = []
+        for i, (mul, left) in enumerate(self.irreps_in["left"]):
+            for j, (_, right) in enumerate(self.irreps_in["right"]):
+                for ir_out in left * right:
+                    if ir_out in self.irreps_out["output"]:
+                        k = len(irreps_mid)
+                        irreps_mid.append((mul, ir_out))
+                        instructions.append((i, j, k, instruction, True))
+        irreps_mid = Irreps(irreps_mid)
+        irreps_mid, p, _ = irreps_mid.sort()
+        # Permute the output indexes of the instructions to match the sorted irreps:
+        instructions = [
+            (i_in1, i_in2, p[i_out], mode, train)
+            for i_in1, i_in2, i_out, mode, train in instructions
+        ]
+
+        self.tp = TensorProduct(
+            self.irreps_in["left"],
+            self.irreps_in["right"],
+            irreps_mid,
+            instructions,
+            shared_weights=internal_weight,
+            internal_weights=internal_weight,
+        )
+        self.internal_weight = internal_weight
+        self.linear = Linear(
+            irreps_in=irreps_mid.simplify(),
+            irreps_out=self.irreps_out["output"],
+            internal_weights=True,
+            shared_weights=True,
+        )
+
+    def forward(self, data=None, left=None, right=None, weight=None):
+        if left == None:
+            input = self.inputKeyMap(data)
+            left, right = input["left"], input["right"]
+            weight = input["weight"]
+        if self.internal_weight:
+            output = self.tp(left, right)
+        else:
+            output = self.tp(left, right, weight)
+        output = self.linear(output)
+        if data == None:
+            return output
+        else:
+            is_per = self.inputKeyMap(data.attrs)["left"][0]
+            data.attrs.update(
+                self.outputKeyMap({"output": (is_per, self.irreps_out["output"])})
+            )
+            data.update(self.outputKeyMap({"output": output}))
+            return data
+
+
+class ResBlock(Module):
+    def __init__(self, irreps_in, irreps_out, activation="silu", biases=True, **kwargs):
+        super().__init__()
+        self.init_irreps(input=irreps_in, output=irreps_out, output_keys=["output"])
+        self.linear_1 = Linear(irreps_in=irreps_in, irreps_out=irreps_in, biases=biases)
+        if not irreps_in == irreps_out:
+            self.linear_2 = Linear(
+                irreps_in=irreps_in, irreps_out=irreps_out, biases=biases
+            )
+        self.act = NormActivation(irreps_in, activations[activation])
+
+    def forward(self, data):
+        if isinstance(data, torch.Tensor):
+            input = data
+        else:
+            input = self.inputKeyMap(data)["input"]
+        output = self.linear_1(self.act(input))
+        output = input + output
+        if not self.irreps_in["input"] == self.irreps_out["output"]:
+            output = self.linear_2(output)
+
+        if isinstance(data, torch.Tensor):
+            return output
+        else:
+            is_per = self.inputKeyMap(data.attrs)["input"][0]
+            data.attrs.update(
+                self.outputKeyMap({"output": (is_per, self.irreps_out["output"])})
+            )
+            data.update(self.outputKeyMap({"output": output}))
+            return data
