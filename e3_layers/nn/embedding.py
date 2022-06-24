@@ -101,7 +101,7 @@ class BesselBasis(nn.Module):
     r_max: float
     prefactor: float
 
-    def __init__(self, r_max, num_basis=8, trainable=True):
+    def __init__(self, r_max, num_basis=8, trainable=True, one_over_r=True):
         r"""Radial Bessel Basis, as proposed in DimeNet: https://arxiv.org/abs/2003.03123
 
 
@@ -115,6 +115,9 @@ class BesselBasis(nn.Module):
 
         trainable : bool
             Train the :math:`n \pi` part or not.
+            
+        one_over_r:
+            Set to true if the value should explode at x = 0, e.g. when x is the interatomic distance.
         """
         super(BesselBasis, self).__init__()
 
@@ -123,6 +126,7 @@ class BesselBasis(nn.Module):
 
         self.r_max = float(r_max)
         self.prefactor = 2.0 / self.r_max
+        self.one_over_r = one_over_r
 
         bessel_weights = (
             torch.linspace(start=1.0, end=num_basis, steps=num_basis) * math.pi
@@ -142,8 +146,10 @@ class BesselBasis(nn.Module):
             Input
         """
         numerator = torch.sin(self.bessel_weights * x.unsqueeze(-1) / self.r_max)
-
-        return self.prefactor * (numerator / x.unsqueeze(-1))
+        result = self.prefactor * numerator
+        if self.one_over_r:
+            result = result/x.unsqueeze(-1)
+        return  result
 
 
 @compile_mode("script")
@@ -212,6 +218,7 @@ class RadialBasisEncoding(Module):
         basis=BesselBasis,
         cutoff=PolynomialCutoff,
         real="1x0e",
+        one_over_r = True,
         input_features=None,
     ):
         """
@@ -226,7 +233,7 @@ class RadialBasisEncoding(Module):
         )
         num_basis = self.irreps_out["radial_embedding"]
         num_basis = num_basis[0].mul
-        self.basis = basis(r_max, num_basis, trainable)
+        self.basis = basis(r_max, num_basis, trainable, one_over_r=one_over_r)
         self.cutoff = cutoff(r_max, p=polynomial_degree)
 
     def forward(self, data):

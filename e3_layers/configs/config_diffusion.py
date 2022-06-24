@@ -7,7 +7,7 @@ from ..nn import PointwiseLinear, RadialBasisEncoding, GraphFeatureEmbedding
 from ..utils import insertAfter
 
 
-def get_config(spec=None):
+def get_config(spec=''):
     config = ConfigDict()
     data, model = ConfigDict(), ConfigDict()
     config.data_config = data
@@ -69,23 +69,43 @@ def get_config(spec=None):
         num_layers=model.num_layers,
         r_max=model.r_max,
     )
-    time_encoding = ('time_encoding', {
-        "module": RadialBasisEncoding,
-        "r_max": 1.0,
-        "trainable": True,
-        "polynomial_degree": 6,
-        "real": ("1x0e", "t"),
-        "irreps_out": (model.edge_radial, "time_encoding"),
-    })
-    layer_configs.layers = insertAfter(layer_configs.layers, 'radial_basis', time_encoding)
-    
-    time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
+
+    if 'embed_time_in_nodes' in spec:
+        time_encoding = ('time_encoding', {
+            "module": RadialBasisEncoding,
+            "r_max": 1.0,
+            "trainable": True,
+            "polynomial_degree": 6,
+            "real": ("1x0e", "t"),
+            'one_over_r': False,
+            "irreps_out": (f"{model.n_dim}x0e", "time_encoding"),
+        })
+        layer_configs.layers = insertAfter(layer_configs.layers, 'chemical_embedding', time_encoding)
+        time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
+                                             'graph': (f"{model.n_dim}x0e", 'time_encoding'),
+                                             'node_in': (f"{model.n_dim}x0e", 'node_features'),
+                                             'node_out': (f"{model.n_dim}x0e", 'node_features')
+                                            })
+        
+    else:
+        time_encoding = ('time_encoding', {
+            "module": RadialBasisEncoding,
+            "r_max": 1.0,
+            "trainable": True,
+            "polynomial_degree": 6,
+            "real": ("1x0e", "t"),
+            'one_over_r': False,
+            "irreps_out": (model.edge_radial, "time_encoding"),
+        })
+        layer_configs.layers = insertAfter(layer_configs.layers, 'radial_basis', time_encoding)
+        time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
                                          'graph': (model.edge_radial, 'time_encoding'),
                                          'edge_in': (model.edge_radial, 'edge_radial'),
                                          'edge_out': (model.edge_radial, 'edge_radial')
                                         })
-    layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
     
+    layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
+  
     layer_configs.layers.append(
         (
             "score_output",
