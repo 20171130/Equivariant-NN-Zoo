@@ -18,10 +18,11 @@ if MODE == 'mol':
   import sde_utils as losses
   import sde_utils as sde_lib
   from sde_utils import getScaler
+  import sde_utils as sampling
 else:
   import losses as losses
   import sde_lib as sde_lib
-import sampling as sampling
+  import sampling as sampling
 from models import utils as mutils
 from models.ema import ExponentialMovingAverage
 import datasets as datasets 
@@ -32,7 +33,7 @@ from utils import save_checkpoint, restore_checkpoint
 from absl import flags, app
 from ml_collections.config_flags import config_flags
 
-from e3_layers.utils import build
+from e3_layers.utils import build, saveMol
 from e3_layers import configs
 from e3_layers.data import CondensedDataset, DataLoader
 
@@ -170,24 +171,25 @@ def train(sde_config, e3_config):
       if sde_config.training.snapshot_sampling:
         ema.store(score_model.parameters())
         ema.copy_to(score_model.parameters())
-        sample, n = sampling_fn(score_model)
         ema.restore(score_model.parameters())
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         tf.io.gfile.makedirs(this_sample_dir)
-        nrow = int(np.sqrt(sample.shape[0]))
-        image_grid = make_grid(sample, nrow, padding=2)
-        sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
         
-        images = wandb.Image(image_grid, caption="Samples")
-        wandb.log({"samples": images, 'n_step': step})
-        
-        with tf.io.gfile.GFile(
-            os.path.join(this_sample_dir, "sample.np"), "wb") as fout:
-          np.save(fout, sample)
+        if MODE == 'mol':
+          saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='tmp.gro')
+          wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'tmp.gro'))})
+        else:
+          sample, n = sampling_fn(score_model)
+          nrow = int(np.sqrt(sample.shape[0]))
+          image_grid = make_grid(sample, nrow, padding=2)
+          sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
 
-        with tf.io.gfile.GFile(
-            os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
-          save_image(image_grid, fout)
+          images = wandb.Image(image_grid, caption="Samples")
+          wandb.log({"samples": images, 'n_step': step})
+
+          with tf.io.gfile.GFile(
+              os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
+            save_image(image_grid, fout)
           
           
 def getDataLoaders(e3_config, sde_config):
@@ -252,6 +254,7 @@ flags.DEFINE_string("eval_folder", "eval",
                     "The folder name for storing evaluation results")
 
 flags.DEFINE_string("e3_config", None, "The name of the config.")
+flags.DEFINE_string("config_spec", '', "Config specification.")
 flags.DEFINE_string("name", "default", "Name of the experiment.")
 flags.DEFINE_integer("seed", None, "The RNG seed.")
 flags.DEFINE_integer(
@@ -296,7 +299,7 @@ def main(argv):
   config_name = FLAGS.e3_config
   e3_config = getattr(configs, config_name, None)
   assert not e3_config is None, f"Config {config_name} not found."
-  e3_config = e3_config()
+  e3_config = e3_config(FLAGS.config_spec)
   
   FLAGS.sde_config.training.batch_size = e3_config.batch_size
   

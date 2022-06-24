@@ -19,9 +19,11 @@
 import torch
 import torch.optim as optim
 import numpy as np
-from models import utils as mutils
 from sde_lib import SDE, VESDE
 from torch_runstats.scatter import scatter
+import functools
+from tqdm import tqdm, trange
+from sampling import get_predictor, get_corrector
 
 
 def get_optimizer(config, params):
@@ -147,26 +149,20 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     Returns:
       loss: A scalar that represents the average loss value across the mini-batch.
     """
-    if train:
-      model.train()
-    else:
-      model.eval()
     device = batch['pos'].device
     t = torch.rand(len(batch), device=device) * (sde.T - eps) + eps
     z = torch.randn_like(batch['pos'])
     node_segment = batch.nodeSegment().to(device)
     mean, std = sde.marginal_prob(batch['pos'], t, node_segment)
     perturbed_data = mean + std * z
+    score_fn = get_score_fn(sde, model, train, continuous)
     
     batch_perturbed = batch.clone()
     batch_perturbed['pos'] = perturbed_data.to(device)
     batch_perturbed['t'] = t
     batch_perturbed.attrs['t'] = ('graph', '1x0e')
-
-    score = model(batch_perturbed)['score']
-    std = sde.marginal_prob(torch.zeros_like(batch['pos']), t, node_segment)[1]
-    score = -score / std
-
+    score = score_fn(batch_perturbed)
+    
     if not likelihood_weighting:
       losses = torch.square(score * std[:, None, None, None] + z)
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
@@ -181,51 +177,20 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
   return loss_fn
 
 
-def get_smld_loss_fn(vesde, train, reduce_mean=False):
-  """Legacy code to reproduce previous results on SMLD(NCSN). Not recommended for new work."""
-  assert isinstance(vesde, VESDE), "SMLD training only works for VESDEs."
-
-  # Previous SMLD models assume descending sigmas
-  smld_sigma_array = torch.flip(vesde.discrete_sigmas, dims=(0,))
-  reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
-
-  def loss_fn(model, batch):
-    model_fn = mutils.get_model_fn(model, train=train)
-    labels = torch.randint(0, vesde.N, (batch.shape[0],), device=batch.device)
-    sigmas = smld_sigma_array.to(batch.device)[labels]
-    noise = torch.randn_like(batch) * sigmas[:, None, None, None]
-    perturbed_data = noise + batch
-    score = model_fn(perturbed_data, labels)
-    target = -noise / (sigmas ** 2)[:, None, None, None]
-    losses = torch.square(score - target)
-    losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * sigmas ** 2
-    loss = torch.mean(losses)
-    return loss
-
-  return loss_fn
-
-
-def get_ddpm_loss_fn(vpsde, train, reduce_mean=True):
-  """Legacy code to reproduce previous results on DDPM. Not recommended for new work."""
-  assert isinstance(vpsde, VPSDE), "DDPM training only works for VPSDEs."
-
-  reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
-
-  def loss_fn(model, batch):
-    model_fn = mutils.get_model_fn(model, train=train)
-    labels = torch.randint(0, vpsde.N, (batch.shape[0],), device=batch.device)
-    sqrt_alphas_cumprod = vpsde.sqrt_alphas_cumprod.to(batch.device)
-    sqrt_1m_alphas_cumprod = vpsde.sqrt_1m_alphas_cumprod.to(batch.device)
-    noise = torch.randn_like(batch)
-    perturbed_data = sqrt_alphas_cumprod[labels, None, None, None] * batch + \
-                     sqrt_1m_alphas_cumprod[labels, None, None, None] * noise
-    score = model_fn(perturbed_data, labels)
-    losses = torch.square(score - noise)
-    losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
-    loss = torch.mean(losses)
-    return loss
-
-  return loss_fn
+def get_score_fn(sde, model, train=False, continuous=False):
+  def score_fn(batch, t=None):
+    if train:
+      model.train()
+    else:
+      model.eval()
+    t = batch['t']
+    device = batch['pos'].device
+    node_segment = batch.nodeSegment().to(device)
+    std = sde.marginal_prob(torch.zeros_like(batch['pos']), t, node_segment)[1]
+    score = model(batch)['score']
+    score = -score / std
+    return score
+  return score_fn
 
 
 def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True, likelihood_weighting=False):
@@ -288,3 +253,130 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
     return loss
 
   return step_fn
+
+def shared_predictor_update_fn(x, t, sde, model, predictor, probability_flow, continuous):
+  """A wrapper that configures and returns the update function of predictors."""
+  score_fn = get_score_fn(sde, model, train=False, continuous=continuous)
+  if predictor is None:
+    # Corrector-only sampler
+    predictor_obj = NonePredictor(sde, score_fn, probability_flow)
+  else:
+    predictor_obj = predictor(sde, score_fn, probability_flow)
+  return predictor_obj.update_fn(x, t)
+
+
+def shared_corrector_update_fn(x, t, sde, model, corrector, continuous, snr, n_steps):
+  """A wrapper tha configures and returns the update function of correctors."""
+  score_fn = get_score_fn(sde, model, train=False, continuous=continuous)
+    
+  if corrector is None:
+    # Predictor-only sampler
+    corrector_obj = NoneCorrector(sde, score_fn, snr, n_steps)
+  else:
+    corrector_obj = corrector(sde, score_fn, snr, n_steps)
+  return corrector_obj.update_fn(x, t)
+
+
+def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
+                   n_steps=1, probability_flow=False, continuous=False,
+                   denoise=True, eps=1e-3, device='cuda'):
+  """Create a Predictor-Corrector (PC) sampler.
+
+  Args:
+    sde: An `sde_lib.SDE` object representing the forward SDE.
+    shape: A sequence of integers. The expected shape of a single sample.
+    predictor: A subclass of `sampling.Predictor` representing the predictor algorithm.
+    corrector: A subclass of `sampling.Corrector` representing the corrector algorithm.
+    inverse_scaler: The inverse data normalizer.
+    snr: A `float` number. The signal-to-noise ratio for configuring correctors.
+    n_steps: An integer. The number of corrector steps per predictor update.
+    probability_flow: If `True`, solve the reverse-time probability flow ODE when running the predictor.
+    continuous: `True` indicates that the score model was continuously trained.
+    denoise: If `True`, add one-step denoising to the final samples.
+    eps: A `float` number. The reverse-time SDE and ODE are integrated to `epsilon` to avoid numerical issues.
+    device: PyTorch device.
+
+  Returns:
+    A sampling function that returns samples and the number of function evaluations during sampling.
+  """
+  # Create predictor & corrector update functions
+  predictor_update_fn = functools.partial(shared_predictor_update_fn,
+                                          sde=sde,
+                                          predictor=predictor,
+                                          probability_flow=probability_flow,
+                                          continuous=continuous)
+  corrector_update_fn = functools.partial(shared_corrector_update_fn,
+                                          sde=sde,
+                                          corrector=corrector,
+                                          continuous=continuous,
+                                          snr=snr,
+                                          n_steps=n_steps)
+  
+
+  def pc_sampler(model):
+    """ The PC sampler funciton.
+
+    Args:
+      model: A score model.
+    Returns:
+      Samples, number of function evaluations.
+    """
+    with torch.no_grad():
+      # Initial sample
+      x = sde.prior_sampling(shape).to(device)
+      timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
+
+      for i in trange(sde.N):
+        t = timesteps[i]
+        vec_t = torch.ones(shape[0], device=t.device) * t
+        x, x_mean = corrector_update_fn(x, vec_t, model=model)
+        x, x_mean = predictor_update_fn(x, vec_t, model=model)
+
+      return inverse_scaler(x_mean if denoise else x), sde.N * (n_steps + 1)
+
+  return pc_sampler
+  
+def get_sampling_fn(config, sde, shape, inverse_scaler, eps):
+  """Create a sampling function.
+
+  Args:
+    config: A `ml_collections.ConfigDict` object that contains all configuration information.
+    sde: A `sde_lib.SDE` object that represents the forward SDE.
+    shape: A sequence of integers representing the expected shape of a single sample.
+    inverse_scaler: The inverse data normalizer function.
+    eps: A `float` number. The reverse-time SDE is only integrated to `eps` for numerical stability.
+
+  Returns:
+    A function that takes random states and a replicated training state and outputs samples with the
+      trailing dimensions matching `shape`.
+  """
+
+  sampler_name = config.sampling.method
+  # Probability flow ODE sampling with black-box ODE solvers
+  if sampler_name.lower() == 'ode':
+    sampling_fn = get_ode_sampler(sde=sde,
+                                  shape=shape,
+                                  inverse_scaler=inverse_scaler,
+                                  denoise=config.sampling.noise_removal,
+                                  eps=eps,
+                                  device=config.device)
+  # Predictor-Corrector sampling. Predictor-only and Corrector-only samplers are special cases.
+  elif sampler_name.lower() == 'pc':
+    predictor = get_predictor(config.sampling.predictor.lower())
+    corrector = get_corrector(config.sampling.corrector.lower())
+    sampling_fn = get_pc_sampler(sde=sde,
+                                 shape=shape,
+                                 predictor=predictor,
+                                 corrector=corrector,
+                                 inverse_scaler=inverse_scaler,
+                                 snr=config.sampling.snr,
+                                 n_steps=config.sampling.n_steps_each,
+                                 probability_flow=config.sampling.probability_flow,
+                                 continuous=config.training.continuous,
+                                 denoise=config.sampling.noise_removal,
+                                 eps=eps,
+                                 device=config.device)
+  else:
+    raise ValueError(f"Sampler name {sampler_name} unknown.")
+
+  return sampling_fn

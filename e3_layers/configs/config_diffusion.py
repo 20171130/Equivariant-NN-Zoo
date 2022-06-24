@@ -34,7 +34,7 @@ def get_config(spec=''):
 
     model.n_dim = 32
     model.l_max = 2
-    model.r_max = 5.0
+    model.r_max = 5.0 # distance between pos of variance 1
     model.num_layers = 5
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
