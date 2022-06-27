@@ -30,10 +30,9 @@ def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp.gro'):
         line += f'{x:>8.3f}{y:>8.3f}{z:>8.3f}'
         line += f'{0.:>8.4f}{0.:>8.4f}{0.:>8.4f}'
         lines.append(line)
-    lines.append('0 0 0')
+ #   lines.append('0 0 0')
     with open(os.path.join(workdir, filename), 'w') as f:
         f.write('\n'.join(lines))
-    
 
 def _delete_files_if_exist(paths):
     # clean up

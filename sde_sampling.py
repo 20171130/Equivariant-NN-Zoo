@@ -1,20 +1,3 @@
-# coding=utf-8
-# Copyright 2020 The Google Research Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# pylint: skip-file
-# pytype: skip-file
 """Various sampling methods."""
 import functools
 
@@ -24,7 +7,7 @@ import abc
 from tqdm import trange
 
 from models.utils import from_flattened_numpy, to_flattened_numpy
-from sde_utils import get_score_fn
+from sde_utils import get_score_fn, getScaler
 from scipy import integrate
 import sde_utils as sde_lib
 from models import utils as mutils
@@ -342,8 +325,26 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
     Returns:
       Samples, number of function evaluations.
     """
+    scaler = getScaler(1) # for zero center
+    batch = batch.clone()
     shape = batch['pos'].shape
     device = batch['pos'].device
+    
+    """
+    t = torch.ones(len(batch), device=device)*0.1
+    batch.attrs['t'] = ('graph', '1x0e')
+    batch['t'] = t
+    
+    _, std = sde.marginal_prob(batch['pos'], t[batch.nodeSegment()].unsqueeze(-1))
+    x = sde.prior_sampling(shape).to(device)
+    batch['pos'] = batch['pos'] + x*std
+
+    score_fn = get_score_fn(sde, model, False, True)
+    score = score_fn(batch)['score']
+    
+    batch['pos'] = batch['pos'] + score*std**2
+    return batch, None
+    """
     with torch.no_grad():
       # Initial sample
       x = sde.prior_sampling(shape).to(device)
@@ -357,6 +358,7 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
         batch['t'] = vec_t
         batch = corrector_update_fn(batch, model=model)
         batch = predictor_update_fn(batch, model=model)
+        batch = scaler(batch)
         
       x, x_mean = batch['pos'], batch['pos_mean']
       if denoise:

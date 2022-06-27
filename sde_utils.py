@@ -1,19 +1,5 @@
-# coding=utf-8
-# Copyright 2020 The Google Research Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""All functions related to loss computation and optimization.
+"""
+All functions related to loss computation and optimization.
 """
 
 import torch
@@ -24,6 +10,10 @@ from torch_runstats.scatter import scatter
 import functools
 from tqdm import tqdm, trange
 from sampling import get_predictor, get_corrector
+
+
+from e3_layers.utils import saveMol
+import wandb
 
 
 def get_optimizer(config, params):
@@ -37,22 +27,6 @@ def get_optimizer(config, params):
 
   return optimizer
 
-
-def optimization_manager(config):
-  """Returns an optimize_fn based on `config`."""
-
-  def optimize_fn(optimizer, params, step, lr=config.optim.lr,
-                  warmup=config.optim.warmup,
-                  grad_clip=config.optim.grad_clip):
-    """Optimizes with warmup and gradient clipping (disabled if negative)."""
-    if warmup > 0:
-      for g in optimizer.param_groups:
-        g['lr'] = lr * np.minimum(step / warmup, 1.0)
-    if grad_clip >= 0:
-      torch.nn.utils.clip_grad_norm_(params, max_norm=grad_clip)
-    optimizer.step()
-
-  return optimize_fn
 
 class VPSDE(SDE):
   def __init__(self, beta_min=0.1, beta_max=20, N=1000):
@@ -172,8 +146,10 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     Returns:
       loss: A scalar that represents the average loss value across the mini-batch.
     """
+    
     device = batch['pos'].device
     t = torch.rand(len(batch), device=device) * (sde.T - eps) + eps
+    #t = t*0 + 0.1
     z = torch.randn_like(batch['pos'])
 
     node_segment = batch.nodeSegment().to(device)
@@ -213,12 +189,13 @@ def get_score_fn(sde, model, train=False, continuous=False):
   return score_fn
 
 
-def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True, likelihood_weighting=False):
+def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
+                likelihood_weighting=False, grad_clid_norm=None):
   """Create a one-step training/evaluation function.
 
   Args:
     sde: An `sde_lib.SDE` object that represents the forward SDE.
-    optimize_fn: An optimization function.
+    optimizer: An optimizer.
     reduce_mean: If `True`, average the loss across data dimensions. Otherwise sum the loss across data dimensions.
     continuous: `True` indicates that the model is defined to take continuous time steps.
     likelihood_weighting: If `True`, weight the mixture of score matching losses according to
@@ -259,7 +236,9 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
       optimizer.zero_grad()
       loss = loss_fn(model, batch)
       loss.backward()
-      optimize_fn(optimizer, model.parameters(), step=state['step'])
+      if not grad_clid_norm is None:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clid_norm)
+      optimizer.step()
       state['step'] += 1
       state['ema'].update(model.parameters())
     else:

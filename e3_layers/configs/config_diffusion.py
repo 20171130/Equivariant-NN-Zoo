@@ -22,15 +22,16 @@ def get_config(spec=''):
     config.metric_key = "validation_loss"  # saves the best model according to this
 
     config.max_epochs = int(1e6)
-    config.early_stopping_patiences = {"validation_loss": 20}
-    config.early_stopping_lower_bounds = {"LR": 1e-6}
+  #  config.early_stopping_patiences = {"validation_loss": 20}
+  #  config.early_stopping_lower_bounds = {"LR": 1e-6}
 
-    config.loss_coeffs = {"dipole": [1e3, "MSELoss"]}
-    config.metrics_components = {"dipole": ["mae"]}
+  #  config.loss_coeffs = {"dipole": [1e3, "MSELoss"]}
+  #  config.metrics_components = {"dipole": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
-    config.lr_scheduler_patience = 2
+    config.lr_scheduler_patience = 15 # number of eval steps
     config.lr_scheduler_factor = 0.8
+    config.grad_clid_norm = 1.0
 
     model.n_dim = 32
     model.l_max = 2
@@ -80,13 +81,20 @@ def get_config(spec=''):
             'one_over_r': False,
             "irreps_out": (f"{model.n_dim}x0e", "time_encoding"),
         })
+        """
+        layer_configs.layers = insertAfter(layer_configs.layers, 'node_attrs', time_encoding)
+        time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
+                                             'graph': (f"{model.n_dim}x0e", 'time_encoding'),
+                                             'node_in': (f"{model.node_attrs}", 'node_attrs'),
+                                             'node_out': (f"{model.node_attrs}", 'node_attrs')
+                                            })
+        """
         layer_configs.layers = insertAfter(layer_configs.layers, 'chemical_embedding', time_encoding)
         time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
                                              'graph': (f"{model.n_dim}x0e", 'time_encoding'),
                                              'node_in': (f"{model.n_dim}x0e", 'node_features'),
                                              'node_out': (f"{model.n_dim}x0e", 'node_features')
                                             })
-        
     elif 'embed_time_in_edges' in spec:
         time_encoding = ('time_encoding', {
             "module": RadialBasisEncoding,

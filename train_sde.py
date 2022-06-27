@@ -86,14 +86,13 @@ def train(sde_config, e3_config):
     raise NotImplementedError(f"SDE {sde_config.training.sde} unknown.")
 
   # Build one-step training and evaluation functions
-  optimize_fn = losses.optimization_manager(sde_config)
   continuous = sde_config.training.continuous
   reduce_mean = sde_config.training.reduce_mean
   likelihood_weighting = sde_config.training.likelihood_weighting
-  train_step_fn = losses.get_step_fn(sde, train=True, optimize_fn=optimize_fn,
+  train_step_fn = losses.get_step_fn(sde, train=True, optimizer=optimizer,
                                      reduce_mean=reduce_mean, continuous=continuous,
-                                     likelihood_weighting=likelihood_weighting)
-  eval_step_fn = losses.get_step_fn(sde, train=False, optimize_fn=optimize_fn,
+                                     likelihood_weighting=likelihood_weighting, grad_clid_norm=e3_config.grad_clid_norm)
+  eval_step_fn = losses.get_step_fn(sde, train=False, optimizer=optimizer,
                                     reduce_mean=reduce_mean, continuous=continuous,
                                     likelihood_weighting=likelihood_weighting)
 
@@ -111,6 +110,11 @@ def train(sde_config, e3_config):
 
   num_train_steps = sde_config.training.n_iters
     
+  scheduler = getattr(torch.optim.lr_scheduler, e3_config.lr_scheduler_name)
+  kwargs = pruneArgs(prefix="lr_scheduler", **e3_config)
+  kwargs.pop('name')
+  lr_sched = scheduler(optimizer=optimizer, **kwargs)
+          
   # In case there are multiple hosts (e.g., TPU pods), only log to host 0
   logging.info("Starting training loop at step %d." % (initial_step,))
     
@@ -143,8 +147,9 @@ def train(sde_config, e3_config):
       eval_batch = scaler(eval_batch)
       eval_loss = eval_step_fn(state, eval_batch)
       logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss.item()))
-      wandb.log(dict(eval_loss = eval_loss.item(), optim_step = step))
-
+      wandb.log(dict(eval_loss = eval_loss.item(), lr = optimizer.param_groups[0]["lr"], optim_step = step))
+      lr_sched.step(metrics=eval_loss.item())
+      
     # Save a checkpoint periodically and generate samples if needed
     if step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps:
       # Save the checkpoint.
@@ -158,14 +163,14 @@ def train(sde_config, e3_config):
         ema.restore(score_model.parameters())
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         tf.io.gfile.makedirs(this_sample_dir)
+        
+        saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth.gro')
+        wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'ground_truth.gro'))})
 
         sample, n = sampling_fn(score_model, batch)
 
         saveMol(inverse_scaler(sample), workdir=FLAGS.workdir, filename='sample.gro')
         wandb.log({'sample': wandb.Molecule(os.path.join(FLAGS.workdir, 'sample.gro'))})
-
-        saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth.gro')
-        wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'ground_truth.gro'))})
           
           
 def getDataLoaders(e3_config):
