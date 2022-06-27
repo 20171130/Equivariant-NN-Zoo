@@ -34,15 +34,15 @@ def get_config(spec=''):
 
     model.n_dim = 32
     model.l_max = 2
-    model.r_max = 5.0 # distance between pos of variance 1
-    model.num_layers = 5
+    model.r_max = 5.0 
+    model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
     num_types = 18
 
     data.n_train = 120000
     data.n_val = 10831
-    data.std = 2.4208
+    data.std = 1.4 # such that the variance of pos is roughly 3
     data.train_val_split = "random"
     data.shuffle = True
     data.path = "qm9.hdf5"
@@ -87,7 +87,7 @@ def get_config(spec=''):
                                              'node_out': (f"{model.n_dim}x0e", 'node_features')
                                             })
         
-    else:
+    elif 'embed_time_in_edges' in spec:
         time_encoding = ('time_encoding', {
             "module": RadialBasisEncoding,
             "r_max": 1.0,
@@ -103,8 +103,11 @@ def get_config(spec=''):
                                          'edge_in': (model.edge_radial, 'edge_radial'),
                                          'edge_out': (model.edge_radial, 'edge_radial')
                                         })
-    
-    layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
+    else:
+        print('WARINING: Not using time embedding!')
+        time_embedding = None
+    if not time_embedding is None:
+        layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
   
     layer_configs.layers.append(
         (

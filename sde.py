@@ -33,7 +33,7 @@ from utils import save_checkpoint, restore_checkpoint
 from absl import flags, app
 from ml_collections.config_flags import config_flags
 
-from e3_layers.utils import build, saveMol
+from e3_layers.utils import build, saveMol, pruneArgs
 from e3_layers import configs
 from e3_layers.data import CondensedDataset, DataLoader
 
@@ -63,7 +63,13 @@ def train(sde_config, e3_config):
   else:
     score_model = mutils.create_model(sde_config)
   ema = ExponentialMovingAverage(score_model.parameters(), decay=sde_config.model.ema_rate)
-  optimizer = losses.get_optimizer(sde_config, score_model.parameters())
+  
+  optim = getattr(torch.optim, e3_config.optimizer_name)
+  kwargs = pruneArgs(prefix="optimizer", **e3_config)
+  kwargs.pop('name')
+  optimizer = optim(
+      params=score_model.parameters(), lr=e3_config.learning_rate, **kwargs
+  )
   state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0)
 
   # Create checkpoints directory
@@ -109,8 +115,9 @@ def train(sde_config, e3_config):
     scaler = datasets.get_data_scaler(sde_config)
     inverse_scaler = datasets.get_data_inverse_scaler(sde_config)
   else:
-    scaler = getScaler(1/e3_config.data_config.std)
-    inverse_scaler = getScaler(e3_config.data_config.std)
+    std = getattr(e3_config.data_config, 'std', 1)
+    scaler = getScaler(1/std)
+    inverse_scaler = getScaler(std)
   
   # Building sampling functions
   if sde_config.training.snapshot_sampling:
@@ -250,8 +257,6 @@ FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file(
   "sde_config", None, "Training sde_configuration.", lock_config=True)
 flags.DEFINE_string("workdir", 'results', "Work directory.")
-flags.DEFINE_string("eval_folder", "eval",
-                    "The folder name for storing evaluation results")
 
 flags.DEFINE_string("e3_config", None, "The name of the config.")
 flags.DEFINE_string("config_spec", '', "Config specification.")

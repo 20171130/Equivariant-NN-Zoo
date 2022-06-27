@@ -24,7 +24,7 @@ def get_config(spec=None):
     config.early_stopping_patiences = {"validation_loss": 20}
     config.early_stopping_lower_bounds = {"LR": 1e-6}
 
-    config.loss_coeffs = {"total_energy": [1e3, "PerAtomMSELoss"]}
+    config.loss_coeffs = {"total_energy": [1e3, "MSELoss"]}
     config.metrics_components = {"total_energy": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
