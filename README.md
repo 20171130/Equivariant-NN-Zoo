@@ -81,14 +81,15 @@ For predicting multipoles of higher degrees, you should decompose them into irre
 Run `python3 train.py --config config_hamiltonian`. 
 Notice that this config only works for H2O computed in ORCA convention.
 The accuracy is comprable (MAE 1.7e-5 Hatree) to [PhiSNet](https://proceedings.neurips.cc/paper/2021/hash/78f1893678afbeaa90b1fa01b9cfb860-Abstract.html) on the water dataset it used.
-## Score Based Generative Model (VP-SDE continous)
+## Score Based Generative Model (continous Variance-Perserving-Stochastic-Differential-Equation)
 First, clone https://github.com/yang-song/score_sde_pytorch and add it to your environment variable `PYTHONPATH`.
 The prior for position is `randn(n_nodes, 3)`, so you need to set the argument `r_max` above 5 (which is about 2 sigma).
 You may set up `data.std` in the config file to scale the input by `1/data.std`, such that the variance is similar before and after perturbation.
 Run
 ```
-python3 sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py --e3_config config_diffusion
+python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion  --wandb --wandb_project diffusion --config_spec embed_time_in_nodes --name test
 ```
+It is normal that the loss does not decrease at all for the first few thousand steps.
 The script assumes there is a tensor named `pos` and reserves the key `t` for time and `species` for molecule/atom/residual type.
 
 

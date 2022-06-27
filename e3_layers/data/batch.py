@@ -177,9 +177,7 @@ class Batch(Data):
                 "Setting item with an integer index is not supported for Batch."
             )
         else:
-            self.data[idx] = item
-            if idx in ('_n_nodes', '_n_edges'):
-                self.computeCumsums()
+            super().__setitem__(idx, item)
 
     def update(self, other):
         for key, value in other.items():

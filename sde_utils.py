@@ -77,19 +77,18 @@ class VPSDE(SDE):
   def T(self):
     return 1
 
-  def sde(self, x, t):
-    beta_t = self.beta_0 + t * (self.beta_1 - self.beta_0)
-    drift = -0.5 * beta_t[:, None, None, None] * x
-    diffusion = torch.sqrt(beta_t)
-    return drift, diffusion
-
-  def marginal_prob(self, x, t, node_segment):
-    t = t[node_segment].unsqueeze(-1)
+  def marginal_prob(self, x, t):
     log_mean_coeff = -0.25 * t ** 2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
     mean = torch.exp(log_mean_coeff) * x
     std = torch.sqrt(1. - torch.exp(2. * log_mean_coeff))
     return mean, std
 
+  def sde(self, x, t):
+    beta_t = self.beta_0 + t * (self.beta_1 - self.beta_0)
+    drift = -0.5 * beta_t * x
+    diffusion = torch.sqrt(beta_t)
+    return drift, diffusion
+  
   def prior_sampling(self, shape):
     return torch.randn(*shape)
 
@@ -98,16 +97,40 @@ class VPSDE(SDE):
     N = np.prod(shape[1:])
     logps = -N / 2. * np.log(2 * np.pi) - torch.sum(z ** 2, dim=(1, 2, 3)) / 2.
     return logps
+  
+  def reverse(self, score_fn, probability_flow=False):
+    """Create the reverse-time SDE/ODE.
 
-  def discretize(self, x, t):
-    """DDPM discretization."""
-    timestep = (t * (self.N - 1) / self.T).long()
-    beta = self.discrete_betas.to(x.device)[timestep]
-    alpha = self.alphas.to(x.device)[timestep]
-    sqrt_beta = torch.sqrt(beta)
-    f = torch.sqrt(alpha)[:, None, None, None] * x - x
-    G = sqrt_beta
-    return f, G
+    Args:
+      score_fn: A time-dependent score-based model that takes x and t and returns the score.
+      probability_flow: If `True`, create the reverse-time ODE used for probability flow sampling.
+    """
+    N = self.N
+    T = self.T
+    sde_fn = self.sde
+    discretize_fn = self.discretize
+
+    # Build the class for reverse-time SDE.
+    class RSDE(self.__class__):
+      def __init__(self):
+        self.N = N
+        self.probability_flow = probability_flow
+
+      @property
+      def T(self):
+        return T
+
+      def sde(self, batch):
+        """Create the drift and diffusion functions for the reverse SDE/ODE."""
+        drift, diffusion = sde_fn(batch['pos'], batch['t'][batch.nodeSegment()])
+        score = score_fn(batch)['score']
+        drift = drift - diffusion ** 2 * score * (0.5 if self.probability_flow else 1.)
+        # Set the diffusion function to zero for ODEs.
+        diffusion = 0. if self.probability_flow else diffusion
+        return drift, diffusion
+
+    return RSDE()
+  
   
 def getScaler(scale):
   def scaler(batch):
@@ -151,20 +174,18 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     """
     device = batch['pos'].device
     t = torch.rand(len(batch), device=device) * (sde.T - eps) + eps
-    t = t*0.+0.5
     z = torch.randn_like(batch['pos'])
 
     node_segment = batch.nodeSegment().to(device)
-    mean, std = sde.marginal_prob(batch['pos'], t, node_segment)
+    mean, std = sde.marginal_prob(batch['pos'], t[batch.nodeSegment()].unsqueeze(-1))
     perturbed_data = mean + std * z
     score_fn = get_score_fn(sde, model, train, continuous)
     
     batch_perturbed = batch.clone()
     batch_perturbed['pos'] = perturbed_data.to(device)
-    batch_perturbed['t'] = t
     batch_perturbed.attrs['t'] = ('graph', '1x0e')
-   
-    score = -score_fn(batch_perturbed)['score']/std
+    batch_perturbed['t'] = t
+    score = score_fn(batch_perturbed)['score']
     if not likelihood_weighting:
       losses = torch.square(score*std + z)
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
@@ -180,12 +201,14 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
 
 
 def get_score_fn(sde, model, train=False, continuous=False):
-  def score_fn(batch, t=None):
+  def score_fn(batch):
     if train:
       model.train()
     else:
       model.eval()
     result = model(batch)
+    std = sde.marginal_prob(torch.zeros_like(batch['pos']), batch['t'][batch.nodeSegment()])[1]
+    result['score'] = -result['score'] / std
     return result
   return score_fn
 
@@ -250,130 +273,3 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
     return loss
 
   return step_fn
-
-def shared_predictor_update_fn(x, t, sde, model, predictor, probability_flow, continuous):
-  """A wrapper that configures and returns the update function of predictors."""
-  score_fn = get_score_fn(sde, model, train=False, continuous=continuous)
-  if predictor is None:
-    # Corrector-only sampler
-    predictor_obj = NonePredictor(sde, score_fn, probability_flow)
-  else:
-    predictor_obj = predictor(sde, score_fn, probability_flow)
-  return predictor_obj.update_fn(x, t)
-
-
-def shared_corrector_update_fn(x, t, sde, model, corrector, continuous, snr, n_steps):
-  """A wrapper tha configures and returns the update function of correctors."""
-  score_fn = get_score_fn(sde, model, train=False, continuous=continuous)
-    
-  if corrector is None:
-    # Predictor-only sampler
-    corrector_obj = NoneCorrector(sde, score_fn, snr, n_steps)
-  else:
-    corrector_obj = corrector(sde, score_fn, snr, n_steps)
-  return corrector_obj.update_fn(x, t)
-
-
-def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
-                   n_steps=1, probability_flow=False, continuous=False,
-                   denoise=True, eps=1e-3, device='cuda'):
-  """Create a Predictor-Corrector (PC) sampler.
-
-  Args:
-    sde: An `sde_lib.SDE` object representing the forward SDE.
-    shape: A sequence of integers. The expected shape of a single sample.
-    predictor: A subclass of `sampling.Predictor` representing the predictor algorithm.
-    corrector: A subclass of `sampling.Corrector` representing the corrector algorithm.
-    inverse_scaler: The inverse data normalizer.
-    snr: A `float` number. The signal-to-noise ratio for configuring correctors.
-    n_steps: An integer. The number of corrector steps per predictor update.
-    probability_flow: If `True`, solve the reverse-time probability flow ODE when running the predictor.
-    continuous: `True` indicates that the score model was continuously trained.
-    denoise: If `True`, add one-step denoising to the final samples.
-    eps: A `float` number. The reverse-time SDE and ODE are integrated to `epsilon` to avoid numerical issues.
-    device: PyTorch device.
-
-  Returns:
-    A sampling function that returns samples and the number of function evaluations during sampling.
-  """
-  # Create predictor & corrector update functions
-  predictor_update_fn = functools.partial(shared_predictor_update_fn,
-                                          sde=sde,
-                                          predictor=predictor,
-                                          probability_flow=probability_flow,
-                                          continuous=continuous)
-  corrector_update_fn = functools.partial(shared_corrector_update_fn,
-                                          sde=sde,
-                                          corrector=corrector,
-                                          continuous=continuous,
-                                          snr=snr,
-                                          n_steps=n_steps)
-  
-
-  def pc_sampler(model):
-    """ The PC sampler funciton.
-
-    Args:
-      model: A score model.
-    Returns:
-      Samples, number of function evaluations.
-    """
-    with torch.no_grad():
-      # Initial sample
-      x = sde.prior_sampling(shape).to(device)
-      timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
-
-      for i in trange(sde.N):
-        t = timesteps[i]
-        vec_t = torch.ones(shape[0], device=t.device) * t
-        x, x_mean = corrector_update_fn(x, vec_t, model=model)
-        x, x_mean = predictor_update_fn(x, vec_t, model=model)
-
-      return inverse_scaler(x_mean if denoise else x), sde.N * (n_steps + 1)
-
-  return pc_sampler
-  
-def get_sampling_fn(config, sde, shape, inverse_scaler, eps):
-  """Create a sampling function.
-
-  Args:
-    config: A `ml_collections.ConfigDict` object that contains all configuration information.
-    sde: A `sde_lib.SDE` object that represents the forward SDE.
-    shape: A sequence of integers representing the expected shape of a single sample.
-    inverse_scaler: The inverse data normalizer function.
-    eps: A `float` number. The reverse-time SDE is only integrated to `eps` for numerical stability.
-
-  Returns:
-    A function that takes random states and a replicated training state and outputs samples with the
-      trailing dimensions matching `shape`.
-  """
-
-  sampler_name = config.sampling.method
-  # Probability flow ODE sampling with black-box ODE solvers
-  if sampler_name.lower() == 'ode':
-    sampling_fn = get_ode_sampler(sde=sde,
-                                  shape=shape,
-                                  inverse_scaler=inverse_scaler,
-                                  denoise=config.sampling.noise_removal,
-                                  eps=eps,
-                                  device=config.device)
-  # Predictor-Corrector sampling. Predictor-only and Corrector-only samplers are special cases.
-  elif sampler_name.lower() == 'pc':
-    predictor = get_predictor(config.sampling.predictor.lower())
-    corrector = get_corrector(config.sampling.corrector.lower())
-    sampling_fn = get_pc_sampler(sde=sde,
-                                 shape=shape,
-                                 predictor=predictor,
-                                 corrector=corrector,
-                                 inverse_scaler=inverse_scaler,
-                                 snr=config.sampling.snr,
-                                 n_steps=config.sampling.n_steps_each,
-                                 probability_flow=config.sampling.probability_flow,
-                                 continuous=config.training.continuous,
-                                 denoise=config.sampling.noise_removal,
-                                 eps=eps,
-                                 device=config.device)
-  else:
-    raise ValueError(f"Sampler name {sampler_name} unknown.")
-
-  return sampling_fn

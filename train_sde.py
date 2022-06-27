@@ -13,20 +13,13 @@ from torchvision.utils import make_grid, save_image
 
 # Keep the import below for registering all model definitions
 from models import ddpm, ncsnv2, ncsnpp
-MODE = 'mol' # 'mol' or 'image'
-if MODE == 'mol':
-  import sde_utils as losses
-  import sde_utils as sde_lib
-  from sde_utils import getScaler
-  import sde_utils as sampling
-else:
-  import losses as losses
-  import sde_lib as sde_lib
-  import sampling as sampling
+import sde_utils as losses
+import sde_utils as sde_lib
+from sde_utils import getScaler
+import sde_sampling as sampling
 from models import utils as mutils
 from models.ema import ExponentialMovingAverage
 import datasets as datasets 
-import evaluation as evaluation
 import likelihood as likelihood
 from utils import save_checkpoint, restore_checkpoint
 
@@ -58,10 +51,7 @@ def train(sde_config, e3_config):
   tf.io.gfile.makedirs(tb_dir)
 
   # Initialize model.
-  if MODE == 'mol':
-    score_model = build(e3_config.model_config).to(sde_config.device)
-  else:
-    score_model = mutils.create_model(sde_config)
+  score_model = build(e3_config.model_config).to(sde_config.device)
   ema = ExponentialMovingAverage(score_model.parameters(), decay=sde_config.model.ema_rate)
   
   optim = getattr(torch.optim, e3_config.optimizer_name)
@@ -108,45 +98,36 @@ def train(sde_config, e3_config):
                                     likelihood_weighting=likelihood_weighting)
 
   # Build data iterators
-  train_iter, eval_iter = getDataLoaders(e3_config, sde_config)
+  train_iter, eval_iter = getDataLoaders(e3_config)
   
   # Create data normalizer and its inverse
-  if MODE == 'image':
-    scaler = datasets.get_data_scaler(sde_config)
-    inverse_scaler = datasets.get_data_inverse_scaler(sde_config)
-  else:
-    std = getattr(e3_config.data_config, 'std', 1)
-    scaler = getScaler(1/std)
-    inverse_scaler = getScaler(std)
+  std = getattr(e3_config.data_config, 'std', 1)
+  scaler = getScaler(1/std)
+  inverse_scaler = getScaler(std)
   
   # Building sampling functions
   if sde_config.training.snapshot_sampling:
-    sampling_shape = (FLAGS.sde_config.training.batch_size, sde_config.data.num_channels,
-                      sde_config.data.image_size, sde_config.data.image_size)
-    sampling_fn = sampling.get_sampling_fn(sde_config, sde, sampling_shape, inverse_scaler, sampling_eps)
+    sampling_fn = sampling.get_sampling_fn(sde_config, sde, inverse_scaler, sampling_eps)
 
   num_train_steps = sde_config.training.n_iters
     
   # In case there are multiple hosts (e.g., TPU pods), only log to host 0
   logging.info("Starting training loop at step %d." % (initial_step,))
     
-  for step in trange(initial_step, num_train_steps + 1):
-    # Convert data to JAX arrays and normalize them. Use ._numpy() to avoid copy.
-    if MODE == 'mol':
-      try:
-        batch = next(train_iter).to(sde_config.device)
-      except StopIteration:
-        train_iter, _ = getDataLoaders(e3_config, sde_config)
-        batch = next(train_iter).to(sde_config.device)
-    else:
-      batch = torch.from_numpy(next(train_iter)['image']._numpy()).to(sde_config.device).float()
-      batch = batch.permute(0, 3, 1, 2)
+  pbar = trange(initial_step, num_train_steps + 1)
+  pbar.set_description(f'{FLAGS.name}')
+  for step in pbar:
+    try:
+      batch = next(train_iter).to(sde_config.device)
+    except StopIteration:
+      train_iter, _ = getDataLoaders(e3_config)
+      batch = next(train_iter).to(sde_config.device)
     batch = scaler(batch)
     # Execute one training step
     loss = train_step_fn(state, batch)
     if step % FLAGS.log_period == 0:
       logging.info("step: %d, training_loss: %.5e" % (step, loss.item()))
-      wandb.log(dict(loss = loss.item(), _step = step))
+      wandb.log(dict(loss = loss.item(), optim_step = step))
 
     # Save a temporary checkpoint to resume training after pre-emption periodically
     if step != 0 and step % FLAGS.save_period == 0:
@@ -154,19 +135,15 @@ def train(sde_config, e3_config):
 
     # Report the loss on an evaluation dataset periodically
     if step % FLAGS.eval_period == 0:
-      if MODE == 'mol':
-        try:
-          eval_batch = next(eval_iter).to(sde_config.device)
-        except StopIteration:
-          _, eval_iter = getDataLoaders(e3_config, sde_config)
-          eval_batch = next(eval_iter).to(sde_config.device)
-      else:
-        eval_batch = torch.from_numpy(next(eval_iter)['image']._numpy()).to(sde_config.device).float()
-        eval_batch = eval_batch.permute(0, 3, 1, 2)
+      try:
+        eval_batch = next(eval_iter).to(sde_config.device)
+      except StopIteration:
+        _, eval_iter = getDataLoaders(e3_config)
+        eval_batch = next(eval_iter).to(sde_config.device)
       eval_batch = scaler(eval_batch)
       eval_loss = eval_step_fn(state, eval_batch)
       logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss.item()))
-      wandb.log(dict(eval_loss = eval_loss.item(), _step = step))
+      wandb.log(dict(eval_loss = eval_loss.item(), optim_step = step))
 
     # Save a checkpoint periodically and generate samples if needed
     if step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps:
@@ -181,75 +158,61 @@ def train(sde_config, e3_config):
         ema.restore(score_model.parameters())
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         tf.io.gfile.makedirs(this_sample_dir)
-        
-        if MODE == 'mol':
-          saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='tmp.gro')
-          wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'tmp.gro'))})
-        else:
-          sample, n = sampling_fn(score_model)
-          nrow = int(np.sqrt(sample.shape[0]))
-          image_grid = make_grid(sample, nrow, padding=2)
-          sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
 
-          images = wandb.Image(image_grid, caption="Samples")
-          wandb.log({"samples": images, 'n_step': step})
+        sample, n = sampling_fn(score_model, batch)
 
-          with tf.io.gfile.GFile(
-              os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
-            save_image(image_grid, fout)
+        saveMol(inverse_scaler(sample), workdir=FLAGS.workdir, filename='sample.gro')
+        wandb.log({'sample': wandb.Molecule(os.path.join(FLAGS.workdir, 'sample.gro'))})
+
+        saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth.gro')
+        wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'ground_truth.gro'))})
           
           
-def getDataLoaders(e3_config, sde_config):
-  if MODE=='mol':
-    data_config = e3_config.data_config
-    dataset = CondensedDataset(**data_config)
+def getDataLoaders(e3_config):
+  data_config = e3_config.data_config
+  dataset = CondensedDataset(**data_config)
 
-    total_n = len(dataset)
-    if (data_config.n_train + data_config.n_val) > total_n:
-        raise ValueError(
-            "too little data for training and validation. please reduce n_train and n_val"
-        )
+  total_n = len(dataset)
+  if (data_config.n_train + data_config.n_val) > total_n:
+      raise ValueError(
+          "too little data for training and validation. please reduce n_train and n_val"
+      )
 
-    if data_config.train_val_split == "random":
-        idcs = torch.randperm(total_n)
-    elif data_config.train_val_split == "sequential":
-        idcs = torch.arange(total_n)
-    else:
-        raise NotImplementedError(
-            f"splitting mode {data_config.train_val_split} not implemented"
-        )
-
-    train_idcs = idcs[: data_config.n_train]
-    val_idcs = idcs[
-        data_config.n_train : data_config.n_train + data_config.n_val
-    ]
-
-    train_ds = dataset.index_select(train_idcs)
-    eval_ds = dataset.index_select(val_idcs)
-    dl_kwargs = dict(
-        batch_size=e3_config.batch_size,
-        num_workers=FLAGS.dataloader_num_workers,
-        pin_memory=True,
-        # avoid getting stuck
-        timeout=(10 if FLAGS.dataloader_num_workers > 0 else 0)
-    )
-    train_dl = DataLoader(
-        dataset=dataset,
-        shuffle=True,
-        **dl_kwargs,
-    )
-    eval_dl = DataLoader(
-        dataset=dataset,
-        shuffle=False, 
-        **dl_kwargs,
-    )
-    train_iter, eval_iter = iter(train_dl), iter(eval_dl)
+  if data_config.train_val_split == "random":
+      idcs = torch.randperm(total_n)
+  elif data_config.train_val_split == "sequential":
+      idcs = torch.arange(total_n)
   else:
-    train_ds, eval_ds, _ = datasets.get_dataset(sde_config,
-                                                uniform_dequantization=sde_config.data.uniform_dequantization)
-    train_iter = iter(train_ds) 
-    eval_iter = iter(eval_ds) 
-    
+      raise NotImplementedError(
+          f"splitting mode {data_config.train_val_split} not implemented"
+      )
+
+  train_idcs = idcs[: data_config.n_train]
+  val_idcs = idcs[
+      data_config.n_train : data_config.n_train + data_config.n_val
+  ]
+
+  train_ds = dataset.index_select(train_idcs)
+  eval_ds = dataset.index_select(val_idcs)
+  dl_kwargs = dict(
+      batch_size=e3_config.batch_size,
+      num_workers=FLAGS.dataloader_num_workers,
+      pin_memory=True,
+      # avoid getting stuck
+      timeout=(10 if FLAGS.dataloader_num_workers > 0 else 0)
+  )
+  train_dl = DataLoader(
+      dataset=dataset,
+      shuffle=True,
+      **dl_kwargs,
+  )
+  eval_dl = DataLoader(
+      dataset=dataset,
+      shuffle=False, 
+      **dl_kwargs,
+  )
+  train_iter, eval_iter = iter(train_dl), iter(eval_dl)
+
   return train_iter, eval_iter
         
 FLAGS = flags.FLAGS
@@ -310,9 +273,14 @@ def main(argv):
   
   config_dict = {'e3': e3_config.to_dict(), 'sde': FLAGS.sde_config.to_dict()}
   run_id = wandb.util.generate_id()
+  if FLAGS.wandb:
+    mode = 'online'
+  else:
+    mode = 'disabled'
   wandb.init(
       project=FLAGS.wandb_project,
       config=config_dict,
+      mode = mode,
       name=f"{FLAGS.name}_{FLAGS.seed}",
       dir = FLAGS.workdir,
       resume="allow",

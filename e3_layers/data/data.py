@@ -48,22 +48,8 @@ class Data(object):
         """
         self.attrs = attrs
         self.data = tensors
-        for key in self.data:
-            if key in attrs:
-                irreps = attrs[key][1]
-                if (
-                    isinstance(irreps, int)
-                    or isinstance(irreps, str)
-                    and irreps.isdigit()
-                ):
-                    dim = int(irreps)
-                elif isinstance(irreps, str) or isinstance(irreps, e3nn.o3.Irreps):
-                    dim = e3nn.o3.Irreps(irreps).dim
-                else:
-                    continue
-                if not len(self.data[key].shape)==2 and self.data[key].shape[-1] == dim:
-                    self.data[key] = self.data[key].view(-1, dim)
-        self.computeSums()
+        for key, value in tensors.items():
+            self[key] = value
 
     def computeSums(self):
         node_key = None
@@ -103,9 +89,25 @@ class Data(object):
     def items(self):
         return [(key, value) for key, value in self.data.items()]
 
-    def __setitem__(self, idx, item):
-        self.data[idx] = item
-        if idx == "_n_nodes" or idx == "_n_edges":
+    def __setitem__(self, key, item):
+        if key in self.attrs:
+            irreps = self.attrs[key][1]
+            if (
+                isinstance(irreps, int)
+                or isinstance(irreps, str)
+                and irreps.isdigit()
+            ):
+                dim = int(irreps)
+            elif isinstance(irreps, str) or isinstance(irreps, e3nn.o3.Irreps):
+                dim = e3nn.o3.Irreps(irreps).dim
+            else:
+                dim = None
+            if not dim is None:
+                if not (len(item.shape)==2 and item.shape[-1] == dim):
+                    item = item.view(-1, dim)
+              
+        self.data[key] = item
+        if key == "_n_nodes" or key == "_n_edges":
             self.computeSums()
 
     def update(self, other):
