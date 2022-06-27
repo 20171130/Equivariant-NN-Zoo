@@ -284,10 +284,10 @@ class GraphFeatureEmbedding(Module):
         if 'edge_out' in self.irreps_out:
             device = input['graph'].device
             feature = input['graph'][data.edgeSegment()]
+            feature = feature/feature.shape[-1]**0.5
             if 'edge_in' in self.irreps_in:
                 feature = torch.cat([input['edge_in'], feature], dim=1)
             feature = self.linear_edge(feature)
-            feature = feature/feature.shape[-1]**0.5
             data.attrs.update(
                 self.outputKeyMap(
                     {"edge_out": ("edge", self.irreps_out["edge_out"])}

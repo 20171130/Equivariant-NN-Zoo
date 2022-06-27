@@ -149,7 +149,7 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     
     device = batch['pos'].device
     t = torch.rand(len(batch), device=device) * (sde.T - eps) + eps
-    #t = t*0 + 0.1
+    shifter = getScaler(1)
     z = torch.randn_like(batch['pos'])
 
     node_segment = batch.nodeSegment().to(device)
@@ -161,6 +161,7 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     batch_perturbed['pos'] = perturbed_data.to(device)
     batch_perturbed.attrs['t'] = ('graph', '1x0e')
     batch_perturbed['t'] = t
+    batch_perturbed = shifter(batch_perturbed)
     score = score_fn(batch_perturbed)['score']
     if not likelihood_weighting:
       losses = torch.square(score*std + z)
@@ -184,7 +185,7 @@ def get_score_fn(sde, model, train=False, continuous=False):
       model.eval()
     result = model(batch)
     std = sde.marginal_prob(torch.zeros_like(batch['pos']), batch['t'][batch.nodeSegment()])[1]
-    result['score'] = -result['score'] / std
+    result['score'] = -result['score'] / std - batch['pos']
     return result
   return score_fn
 

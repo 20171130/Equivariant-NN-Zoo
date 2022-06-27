@@ -83,7 +83,7 @@ Notice that this config only works for H2O computed in ORCA convention.
 The accuracy is comprable (MAE 1.7e-5 Hatree) to [PhiSNet](https://proceedings.neurips.cc/paper/2021/hash/78f1893678afbeaa90b1fa01b9cfb860-Abstract.html) on the water dataset it used.
 ## Score Based Generative Model (continous Variance-Perserving-Stochastic-Differential-Equation)
 First, clone https://github.com/yang-song/score_sde_pytorch and add it to your environment variable `PYTHONPATH`.
-The prior for position is `randn(n_nodes, 3)`, so you need to set the argument `r_max` above 5 (which is about 2 sigma).
+The prior for position is `randn(n_nodes, 3)`, so you need to set the argument `r_max` at least 7.
 You may set up `data.std` in the config file to scale the input by `1/data.std`, such that the variance is similar before and after perturbation.
 Run
 ```
