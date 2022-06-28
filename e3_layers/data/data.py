@@ -67,11 +67,11 @@ class Data(object):
             elif attrs[key][0] == "graph":
                 graph_key = key
         if node_key:
-            self.n_nodes = self.data[node_key].shape[self.__cat_dim__(key)]
+            self.n_nodes = self.data[node_key].shape[self.__cat_dim__(node_key)]
         if edge_key:
-            self.n_edges = self.data[edge_key].shape[self.__cat_dim__(key)]
+            self.n_edges = self.data[edge_key].shape[self.__cat_dim__(edge_key)]
         if graph_key:
-            self.n_graphs = self.data[graph_key].shape[self.__cat_dim__(key)]
+            self.n_graphs = self.data[graph_key].shape[self.__cat_dim__(graph_key)]
 
     def __len__(self):
         r"""Returns the number of all present attributes."""
@@ -88,10 +88,9 @@ class Data(object):
 
     def items(self):
         return [(key, value) for key, value in self.data.items()]
-
-    def __setitem__(self, key, item):
-        if not isinstance(item, torch.Tensor):
-            item = torch.tensor(item)
+      
+    def num_dims(self, key):
+        dim = None
         if key in self.attrs:
             irreps = self.attrs[key][1]
             if (
@@ -102,21 +101,23 @@ class Data(object):
                 dim = int(irreps)
             elif isinstance(irreps, str) or isinstance(irreps, e3nn.o3.Irreps):
                 dim = e3nn.o3.Irreps(irreps).dim
-            else:
-                dim = None
-            if not dim is None:
-                if not (len(item.shape)==2 and item.shape[-1] == dim):
-                    item = item.view(-1, dim)
+        return dim
+
+    def __setitem__(self, key, item):
+        if not isinstance(item, torch.Tensor):
+            item = torch.tensor(item)
+        dim = self.num_dims(key)
+        if not dim is None:
+            if not (len(item.shape)==2 and item.shape[-1] == dim):
+                item = item.view(-1, dim)
               
         self.data[key] = item
-        if key == "_n_nodes" or key == "_n_edges":
-            self.computeSums()
+        self.computeSums()
 
     def update(self, other):
         for key, value in other.items():
             self[key] = value
-        if "_n_nodes" in other or "_n_edges" in other:
-            self.computeSums()
+        self.computeSums()
 
     def __call__(self, *keys):
         r"""Iterates over all attributes :obj:`*keys` in the data, yielding

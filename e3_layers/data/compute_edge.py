@@ -180,11 +180,10 @@ def computeEdgeIndex(
     strict_self_interaction: bool = True,
     **kwargs
 ):
-    """Build neighbor graph from points, optionally with PBC.
-
-    Args:
-        pos (np.ndarray/torch.Tensor shape [N, 3]): node positions. If Tensor, must be on the CPU.
-        r_max (float): neighbor cutoff radius.
+    """
+    Compute edge indices between nodes within r_max.
+    If there has already been an edge_index in batch, map all edge features to be consistent with the new edge indices.
+    Zero-pad the features for new edges.
     """
 
     pos = batch["pos"]
@@ -193,6 +192,9 @@ def computeEdgeIndex(
     lst = []
     n_edges = []
     cnt = 0
+    old_edge_index = None
+    if 'edge_index' in batch:
+        old_edge_index = batch['edge_index']
     if '_n_nodes' in batch:
         for i, n in enumerate(batch['_n_nodes']):
             tmp = pos[cnt:cnt+n]
@@ -218,6 +220,15 @@ def computeEdgeIndex(
     n_edges = torch.tensor(n_edges).to(pos.device)
     attrs = batch.attrs
     attrs["_n_edges"] = ('graph', '1x0e')
+
+    for key, value in batch.attrs.items():
+        if value[0] == 'edge':
+            dim = batch.num_dims(key)
+            value = batch[key]
+            tmp = torch.zeros((batch.n_nodes, batch.n_nodes, dim), dtype=value.dtype, device=value.device)
+            tmp[old_edge_index[0, :], old_edge_index[1, :]] = value
+            batch[key] = tmp[edge_index[0, :], edge_index[1, :]]
+    
     batch["edge_index"] = edge_index
     batch["_n_edges"] = n_edges
 

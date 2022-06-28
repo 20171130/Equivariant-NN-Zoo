@@ -18,20 +18,20 @@ class Batch(Data):
         Call from_data_list if initializing from a list of data dicts.
         """
         super().__init__(attrs, **tensors)
-        self.computeCumsums()
 
     def computeCumsums(self):
-        self.computeSums()
         if "_n_nodes" in self.data:
             self.n_graphs = self.data["_n_nodes"].shape[0]
             self.node_cumsum = [0]
             for i in range(self.n_graphs):
                 self.node_cumsum.append(self.node_cumsum[-1] + self.data["_n_nodes"][i])
+            self.n_nodes = self.node_cumsum[-1]
         if "_n_edges" in self.data:
             self.n_graphs = self.data["_n_edges"].shape[0]
             self.edge_cumsum = [0]
             for i in range(self.n_graphs):
                 self.edge_cumsum.append(self.edge_cumsum[-1] + self.data["_n_edges"][i])
+            self.n_edges = self.edge_cumsum[-1]
 
     @classmethod
     def from_data_list(cls, lst, attrs={}):
@@ -172,13 +172,15 @@ class Batch(Data):
         else:
             return self.index_select(idx)
 
-    def __setitem__(self, idx, item):
-        if isinstance(idx, int):
+    def __setitem__(self, key, item):
+        if isinstance(key, int):
             raise UnimplementedError(
                 "Setting item with an integer index is not supported for Batch."
             )
         else:
-            super().__setitem__(idx, item)
+            super().__setitem__(key, item)
+        if key == '_n_nodes' or key == '_n_edges':
+            self.computeCumsums()
 
     def update(self, other):
         for key, value in other.items():

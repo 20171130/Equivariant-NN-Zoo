@@ -48,8 +48,8 @@ def get_config(spec=''):
     data.shuffle = True
     data.path = "qm9_edge.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
- #   data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
-    data.key_map = {"Z": "atom_types", "R": "pos", "U": "total_energy", "node_attr": "bond_type"}
+    data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
+    data.key_map = {"Z": "atom_types", "R": "pos", "U": "total_energy", "edge_attr": "bond_type"}
     
     if spec and 'profiling' in spec:
         data.n_train = 2048
