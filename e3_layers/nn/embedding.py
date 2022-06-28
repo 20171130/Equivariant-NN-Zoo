@@ -235,6 +235,9 @@ class RadialBasisEncoding(Module):
         num_basis = num_basis[0].mul
         self.basis = basis(r_max, num_basis, trainable, one_over_r=one_over_r)
         self.cutoff = cutoff(r_max, p=polynomial_degree)
+        if not input_features is None:
+            self.linear = PointwiseLinear(self.irreps_out["radial_embedding"]+self.irreps_in['input_features'], 
+                                          self.irreps_out["radial_embedding"])
 
     def forward(self, data):
         input = self.inputKeyMap(data)
@@ -246,7 +249,7 @@ class RadialBasisEncoding(Module):
             self.basis(real) * self.cutoff(real)[:, None]
         )
         if not input_features is None:
-            embedded = embedded * input_features
+            embedded = self.linear(torch.cat([embedded, input_features], dim=-1))
         is_per = input.attrs['real'][0]
         data.attrs.update(
             self.outputKeyMap(

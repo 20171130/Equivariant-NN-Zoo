@@ -11,6 +11,7 @@ from sde_utils import get_score_fn, getScaler
 from scipy import integrate
 import sde_utils as sde_lib
 from models import utils as mutils
+from torch_runstats.scatter import scatter
 
 _CORRECTORS = {}
 _PREDICTORS = {}
@@ -115,58 +116,6 @@ class EulerMaruyamaPredictor(Predictor):
     return batch
 
 
-@register_predictor(name='reverse_diffusion')
-class ReverseDiffusionPredictor(Predictor):
-  def __init__(self, sde, score_fn, probability_flow=False):
-    super().__init__(sde, score_fn, probability_flow)
-
-  def update_fn(self, x, t):
-    f, G = self.rsde.discretize(x, t)
-    z = torch.randn_like(x)
-    x_mean = x - f
-    x = x_mean + G[:, None, None, None] * z
-    return x, x_mean
-
-
-@register_predictor(name='ancestral_sampling')
-class AncestralSamplingPredictor(Predictor):
-  """The ancestral sampling predictor. Currently only supports VE/VP SDEs."""
-
-  def __init__(self, sde, score_fn, probability_flow=False):
-    super().__init__(sde, score_fn, probability_flow)
-    if not isinstance(sde, sde_lib.VPSDE) and not isinstance(sde, sde_lib.VESDE):
-      raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
-    assert not probability_flow, "Probability flow not supported by ancestral sampling"
-
-  def vesde_update_fn(self, x, t):
-    sde = self.sde
-    timestep = (t * (sde.N - 1) / sde.T).long()
-    sigma = sde.discrete_sigmas[timestep]
-    adjacent_sigma = torch.where(timestep == 0, torch.zeros_like(t), sde.discrete_sigmas.to(t.device)[timestep - 1])
-    score = self.score_fn(x, t)
-    x_mean = x + score * (sigma ** 2 - adjacent_sigma ** 2)[:, None, None, None]
-    std = torch.sqrt((adjacent_sigma ** 2 * (sigma ** 2 - adjacent_sigma ** 2)) / (sigma ** 2))
-    noise = torch.randn_like(x)
-    x = x_mean + std[:, None, None, None] * noise
-    return x, x_mean
-
-  def vpsde_update_fn(self, x, t):
-    sde = self.sde
-    timestep = (t * (sde.N - 1) / sde.T).long()
-    beta = sde.discrete_betas.to(t.device)[timestep]
-    score = self.score_fn(x, t)
-    x_mean = (x + beta[:, None, None, None] * score) / torch.sqrt(1. - beta)[:, None, None, None]
-    noise = torch.randn_like(x)
-    x = x_mean + torch.sqrt(beta)[:, None, None, None] * noise
-    return x, x_mean
-
-  def update_fn(self, x, t):
-    if isinstance(self.sde, sde_lib.VESDE):
-      return self.vesde_update_fn(x, t)
-    elif isinstance(self.sde, sde_lib.VPSDE):
-      return self.vpsde_update_fn(x, t)
-
-
 @register_predictor(name='none')
 class NonePredictor(Predictor):
   """An empty predictor that does nothing."""
@@ -182,69 +131,28 @@ class NonePredictor(Predictor):
 class LangevinCorrector(Corrector):
   def __init__(self, sde, score_fn, snr, n_steps):
     super().__init__(sde, score_fn, snr, n_steps)
-    if not isinstance(sde, sde_lib.VPSDE) \
-        and not isinstance(sde, sde_lib.VESDE) \
-        and not isinstance(sde, sde_lib.subVPSDE):
+    if not isinstance(sde, sde_lib.VPSDE):
       raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
 
-  def update_fn(self, x, t):
+  def update_fn(self, batch):
     sde = self.sde
     score_fn = self.score_fn
     n_steps = self.n_steps
     target_snr = self.snr
-    if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
-      timestep = (t * (sde.N - 1) / sde.T).long()
-      alpha = sde.alphas.to(t.device)[timestep]
-    else:
-      alpha = torch.ones_like(t)
-
+    x, t = batch['pos'], batch['t'][batch.nodeSegment()]
+    timestep = (t * (sde.N - 1) / sde.T).long()
+    alpha = sde.alphas.to(t.device)[timestep]
     for i in range(n_steps):
-      grad = score_fn(x, t)
+      grad = score_fn(batch)['score']
       noise = torch.randn_like(x)
       grad_norm = torch.norm(grad.reshape(grad.shape[0], -1), dim=-1).mean()
       noise_norm = torch.norm(noise.reshape(noise.shape[0], -1), dim=-1).mean()
       step_size = (target_snr * noise_norm / grad_norm) ** 2 * 2 * alpha
-      x_mean = x + step_size[:, None, None, None] * grad
-      x = x_mean + torch.sqrt(step_size * 2)[:, None, None, None] * noise
-
-    return x, x_mean
-
-
-@register_corrector(name='ald')
-class AnnealedLangevinDynamics(Corrector):
-  """The original annealed Langevin dynamics predictor in NCSN/NCSNv2.
-
-  We include this corrector only for completeness. It was not directly used in our paper.
-  """
-
-  def __init__(self, sde, score_fn, snr, n_steps):
-    super().__init__(sde, score_fn, snr, n_steps)
-    if not isinstance(sde, sde_lib.VPSDE) \
-        and not isinstance(sde, sde_lib.VESDE) \
-        and not isinstance(sde, sde_lib.subVPSDE):
-      raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
-
-  def update_fn(self, x, t):
-    sde = self.sde
-    score_fn = self.score_fn
-    n_steps = self.n_steps
-    target_snr = self.snr
-    if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
-      timestep = (t * (sde.N - 1) / sde.T).long()
-      alpha = sde.alphas.to(t.device)[timestep]
-    else:
-      alpha = torch.ones_like(t)
-
-    std = self.sde.marginal_prob(x, t)[1]
-
-    for i in range(n_steps):
-      grad = score_fn(x, t)
-      noise = torch.randn_like(x)
-      step_size = (target_snr * std) ** 2 * 2 * alpha
-      x_mean = x + step_size[:, None, None, None] * grad
-      x = x_mean + noise * torch.sqrt(step_size * 2)[:, None, None, None]
-
-    return x, x_mean
+      x_mean = x + step_size * grad
+      x = x_mean + torch.sqrt(step_size * 2)* noise
+    batch['pos'] = x
+    batch['pos_mean'] = x_mean
+    return batch
 
 
 @register_corrector(name='none')
@@ -325,13 +233,23 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
     Returns:
       Samples, number of function evaluations.
     """
+    
     batch = batch.clone()
     shape = batch['pos'].shape
     device = batch['pos'].device
     
+    def computeVariance(batch):
+      variance = (batch['pos']*batch['pos']).sum(dim=-1, keepdim=True)
+      node_segment = batch.nodeSegment().to(device)
+      variance = scatter(variance, node_segment, dim=0, reduce='sum')
+      variance = variance / batch['_n_nodes']
+      return variance
+      
     with torch.no_grad():
+      ground_truth_std = computeVariance(batch) ** 0.5
       # Initial sample
       x = sde.prior_sampling(shape).to(device)
+      
       batch['pos'] = x
       timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
 
@@ -342,6 +260,10 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
         batch['t'] = vec_t
         batch = corrector_update_fn(batch, model=model)
         batch = predictor_update_fn(batch, model=model)
+        
+        std = computeVariance(batch) ** 0.5
+        batch['pos'] = batch['pos'] / std[batch.nodeSegment()]
+        batch['pos'] = batch['pos'] * ground_truth_std[batch.nodeSegment()]
         
       x, x_mean = batch['pos'], batch['pos_mean']
       if denoise:

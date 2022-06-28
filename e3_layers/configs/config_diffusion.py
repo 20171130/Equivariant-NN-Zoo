@@ -19,9 +19,9 @@ def get_config(spec=''):
     config.use_ema = True
     config.ema_decay = 0.99
     config.ema_use_num_updates = True
-    config.metric_key = "validation_loss"  # saves the best model according to this
+  #  config.metric_key = "validation_loss"  # saves the best model according to this
 
-    config.max_epochs = int(1e6)
+  #  config.max_epochs = int(1e6)
   #  config.early_stopping_patiences = {"validation_loss": 20}
   #  config.early_stopping_lower_bounds = {"LR": 1e-6}
 
@@ -35,7 +35,7 @@ def get_config(spec=''):
 
     model.n_dim = 32
     model.l_max = 2
-    model.r_max = 8.0 
+    model.r_max = 5.0 
     model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
@@ -81,19 +81,11 @@ def get_config(spec=''):
             'one_over_r': False,
             "irreps_out": (f"{model.n_dim}x0e", "time_encoding"),
         })
-        """
         layer_configs.layers = insertAfter(layer_configs.layers, 'node_attrs', time_encoding)
         time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
                                              'graph': (f"{model.n_dim}x0e", 'time_encoding'),
                                              'node_in': (f"{model.node_attrs}", 'node_attrs'),
                                              'node_out': (f"{model.node_attrs}", 'node_attrs')
-                                            })
-        """
-        layer_configs.layers = insertAfter(layer_configs.layers, 'chemical_embedding', time_encoding)
-        time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
-                                             'graph': (f"{model.n_dim}x0e", 'time_encoding'),
-                                             'node_in': (f"{model.n_dim}x0e", 'node_features'),
-                                             'node_out': (f"{model.n_dim}x0e", 'node_features')
                                             })
     elif 'embed_time_in_edges' in spec:
         time_encoding = ('time_encoding', {
