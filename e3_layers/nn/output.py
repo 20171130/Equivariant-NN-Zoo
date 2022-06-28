@@ -36,7 +36,7 @@ class GradientOutput(Module):
         grad = torch.autograd.grad(
             self.inputKeyMap(output)["y"].sum(),
             wrt_tensor,
-            create_graph=self.training,  # needed to allow gradients of this output during training
+            create_graph=self.training  # needed to allow gradients of this output during training
         )
 
         grad = self.sign * grad[0]

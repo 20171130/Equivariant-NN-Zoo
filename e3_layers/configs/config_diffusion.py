@@ -2,7 +2,7 @@ from functools import partial
 from ..data import computeEdgeIndex
 from ml_collections.config_dict import ConfigDict
 import ase
-from .layer_configs import featureModel, addEdgeEmbedding
+from .layer_configs import featureModel, addEdgeEmbedding, addForceOutput, addEnergyOutput
 from ..nn import PointwiseLinear, RadialBasisEncoding, GraphFeatureEmbedding
 from ..utils import insertAfter
 
@@ -18,6 +18,7 @@ def get_config(spec=''):
 
     config.use_ema = True
     config.ema_decay = 0.99
+    config.config_spec = spec
     config.ema_use_num_updates = True
   #  config.metric_key = "validation_loss"  # saves the best model according to this
 
@@ -48,7 +49,8 @@ def get_config(spec=''):
     data.shuffle = True
     data.path = "qm9_edge.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
+    if not 'gcn' in spec:
+        data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
     data.key_map = {"Z": "atom_types", "R": "pos", "U": "total_energy", "edge_attr": "bond_type"}
     
     if spec and 'profiling' in spec:
@@ -70,6 +72,7 @@ def get_config(spec=''):
         num_layers=model.num_layers,
         r_max=model.r_max,
     )
+    layer_configs = addEdgeEmbedding(layer_configs, num_bond_types=4)
 
     if 'embed_time_in_nodes' in spec:
         time_encoding = ('time_encoding', {
@@ -108,17 +111,22 @@ def get_config(spec=''):
         time_embedding = None
     if not time_embedding is None:
         layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
-    layer_configs = addEdgeEmbedding(layer_configs, num_bond_types=4)
-    layer_configs.layers.append(
-        (
-            "score_output",
-            {
-                "module": PointwiseLinear,
-                "irreps_in": (features, "node_features"),
-                "irreps_out": (f"1x1o", "score"),
-            },
+    
+    if 'nll' in spec:
+        layer_configs = addEnergyOutput(layer_configs, shifts=None, output_key='nll')
+        layer_configs = addForceOutput(layer_configs, y='nll', gradients='score')
+    else: # predict scores directly
+        layer_configs.layers.append(
+            (
+                "score_output",
+                {
+                    "module": PointwiseLinear,
+                    "irreps_in": (features, "node_features"),
+                    "irreps_out": (f"1x1o", "score"),
+                },
+            )
         )
-    )
+    # the gradients are in fact -score, sign will be reversed in score_fn
     model.update(layer_configs)
 
     return config

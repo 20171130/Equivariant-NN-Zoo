@@ -25,7 +25,7 @@ def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp.gro'):
     lines.append(f'{batch["_n_nodes"][idx].item()}')
     for i in range(batch['_n_nodes'][idx]):
         species = type_names[batch['atom_types'][batch.node_cumsum[idx]+i]]
-        line = f"{1:>5}{'none':>5}{species:>5}{i:>5}"
+        line = f"{1:>5}{f'none':>5}{species:>5}{i:>5}"
         x, y, z = batch['pos'][batch.node_cumsum[idx]+i]*0.1 # A to nm
         line += f'{x:>8.3f}{y:>8.3f}{z:>8.3f}'
         line += f'{0.:>8.4f}{0.:>8.4f}{0.:>8.4f}'

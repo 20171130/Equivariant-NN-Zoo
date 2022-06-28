@@ -247,7 +247,7 @@ class RadialBasisEncoding(Module):
             input_features = input["input_features"]
         embedded = (
             self.basis(real) * self.cutoff(real)[:, None]
-        )
+        ).view(real.shape[0], -1)
         if not input_features is None:
             embedded = self.linear(torch.cat([embedded, input_features], dim=-1))
         is_per = input.attrs['real'][0]

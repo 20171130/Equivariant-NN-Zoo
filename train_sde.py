@@ -28,7 +28,7 @@ from ml_collections.config_flags import config_flags
 
 from e3_layers.utils import build, saveMol, pruneArgs
 from e3_layers import configs
-from e3_layers.data import CondensedDataset, DataLoader
+from e3_layers.data import CondensedDataset, DataLoader, Batch, computeEdgeVector
 
 import pdb
 
@@ -168,10 +168,27 @@ def train(sde_config, e3_config):
         saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth.gro')
         wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'ground_truth.gro'))})
 
-        sample, n = sampling_fn(score_model, batch)
+        n_samples = 5
+        lst = [batch[0] for i in range(n_samples)]
+        batch = Batch.from_data_list(lst, batch.attrs)
+        samples_batch, n = sampling_fn(score_model, batch)
+        samples = [samples_batch[i] for i in range(len(samples_batch))]
+        
+        batch = computeEdgeVector(batch)
+        min_loss = 9999
+        argmin = 0
+        sum_loss = 0
+        for i, sample in enumerate(samples):
+          loss = (batch[0]['edge_length'] - sample['edge_length'])**2
+          loss = loss.mean().item()
+          sum_loss += loss
+          if loss < min_loss:
+            min_loss = loss
+            argmin = i
 
-        saveMol(inverse_scaler(sample), workdir=FLAGS.workdir, filename='sample.gro')
-        wandb.log({'sample': wandb.Molecule(os.path.join(FLAGS.workdir, 'sample.gro'))})
+        filename = f'{step}_{sum_loss/n_samples}.gro'
+        saveMol(samples_batch, idx=i, workdir=FLAGS.workdir, filename=filename)
+        wandb.log({'sample': wandb.Molecule(os.path.join(FLAGS.workdir, filename))})
           
           
 def getDataLoaders(e3_config):
@@ -229,7 +246,7 @@ flags.DEFINE_string("workdir", 'results', "Work directory.")
 flags.DEFINE_string("e3_config", None, "The name of the config.")
 flags.DEFINE_string("config_spec", '', "Config specification.")
 flags.DEFINE_string("name", "default", "Name of the experiment.")
-flags.DEFINE_integer("seed", None, "The RNG seed.")
+flags.DEFINE_integer("seed", 0, "The RNG seed.")
 flags.DEFINE_integer(
     "dataloader_num_workers", 4, "Number of workers per training process."
 )

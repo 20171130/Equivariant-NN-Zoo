@@ -113,6 +113,7 @@ def addEdgeEmbedding(config, num_bond_types):
     n_dim, r_max, edge_radial = config.n_dim, config.r_max, config.edge_radial
     layers["edge_onehot"] = {
         "module": OneHotEncoding,
+         "num_types": num_bond_types,
         "irreps_out": (f"{num_bond_types}x0e", "edge_onehot"),
         "irreps_in": ("1x0e", "bond_type"),
     }
@@ -122,7 +123,7 @@ def addEdgeEmbedding(config, num_bond_types):
         "irreps_out": (f"{n_dim}x0e", "edge_embedding"),
     }
     layers = list(layers.items())
-    layers = layers + config.layers
+    config.layers = layers + config.layers
     
     layer = {
         "module": RadialBasisEncoding,
@@ -133,12 +134,12 @@ def addEdgeEmbedding(config, num_bond_types):
         "real": ('1x0e', "edge_length"),
         "irreps_out": (edge_radial, "edge_radial"),
     }
-    replace(layers, 'radial_basis', ('radial_basis', layer))
+    config.layers = replace(config.layers, 'radial_basis', ('radial_basis', layer))
 
     return config
 
 
-def addEnergyOutput(config, shifts, output_key='total_energy'):
+def addEnergyOutput(config, shifts=None, output_key='total_energy'):
     layers = {}
     layers["output_linear"] = {
         "module": PointwiseLinear,
@@ -146,15 +147,16 @@ def addEnergyOutput(config, shifts, output_key='total_energy'):
         "irreps_out": ("1x0e", "energy"),
     }
 
-    layers["rescale"] = {
-        "module": PerTypeScaleShift,
-        "num_types": config.num_types,
-        "shifts": shifts,
-        "scales": None,
-        "irreps_in": ("1x0e", "energy"),
-        "irreps_out": ("1x0e", "energy"),
-        "species": ("1x0e", "atom_types"),
-    }
+    if not shifts is None:
+        layers["rescale"] = {
+            "module": PerTypeScaleShift,
+            "num_types": config.num_types,
+            "shifts": shifts,
+            "scales": None,
+            "irreps_in": ("1x0e", "energy"),
+            "irreps_out": ("1x0e", "energy"),
+            "species": ("1x0e", "atom_types"),
+        }
 
     layers["reduce"] = {
         "module": Pooling,
@@ -166,7 +168,7 @@ def addEnergyOutput(config, shifts, output_key='total_energy'):
     return config
 
 
-def addForceOutput(config):
+def addForceOutput(config, gradients = 'forces', y='energy'):
     config = config.to_dict()
     layers = config.pop('layers')
     module = config.pop('module')
@@ -177,8 +179,8 @@ def addForceOutput(config):
         {
             "module": GradientOutput,
             "x": ("1x1o", "pos"),
-            "y": ("1x0e", "energy"),
-            'gradients': ("1x1o", "forces"),
+            "y": ("1x0e", y),
+            'gradients': ("1x1o", gradients),
         }
     )
     return config

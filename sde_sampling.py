@@ -149,6 +149,8 @@ class LangevinCorrector(Corrector):
       noise_norm = torch.norm(noise.reshape(noise.shape[0], -1), dim=-1).mean()
       step_size = (target_snr * noise_norm / grad_norm) ** 2 * 2 * alpha
       x_mean = x + step_size * grad
+     # print(f'variance {(x*x).sum(dim=-1).mean()}')
+     # print(f'inner product{(grad*x).sum(dim=-1).mean()}')
       x = x_mean + torch.sqrt(step_size * 2)* noise
     batch['pos'] = x
     batch['pos_mean'] = x_mean
@@ -234,41 +236,33 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
       Samples, number of function evaluations.
     """
     
-    batch = batch.clone()
+    clean_batch = batch.clone()
+    clean_batch.attrs['t'] = ('graph', '1x0e')
+      
     shape = batch['pos'].shape
     device = batch['pos'].device
-    
-    def computeVariance(batch):
-      variance = (batch['pos']*batch['pos']).sum(dim=-1, keepdim=True)
-      node_segment = batch.nodeSegment().to(device)
-      variance = scatter(variance, node_segment, dim=0, reduce='sum')
-      variance = variance / batch['_n_nodes']
-      return variance
       
-    with torch.no_grad():
-      ground_truth_std = computeVariance(batch) ** 0.5
-      # Initial sample
-      x = sde.prior_sampling(shape).to(device)
-      
-      batch['pos'] = x
-      timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
+    # Initial sample
+    x = sde.prior_sampling(shape).to(device)
+    timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
 
-      for i in trange(sde.N):
-        t = timesteps[i]
-        vec_t = torch.ones(len(batch), device=t.device) * t
-        batch.attrs['t'] = ('graph', '1x0e')
-        batch['t'] = vec_t
-        batch = corrector_update_fn(batch, model=model)
-        batch = predictor_update_fn(batch, model=model)
-        
-        std = computeVariance(batch) ** 0.5
-        batch['pos'] = batch['pos'] / std[batch.nodeSegment()]
-        batch['pos'] = batch['pos'] * ground_truth_std[batch.nodeSegment()]
-        
-      x, x_mean = batch['pos'], batch['pos_mean']
-      if denoise:
-        batch['pos'] = batch['pos_mean']
-      return inverse_scaler(batch), sde.N * (n_steps + 1)
+    for i in trange(sde.N):
+      t = timesteps[i]
+      vec_t = torch.ones(len(batch), device=t.device) * t
+      
+      batch = clean_batch.clone()
+      batch.update({'t': vec_t, 'pos':x})
+      result = corrector_update_fn(batch, model=model)
+      x = result['pos'].detach()
+      
+      batch = clean_batch.clone()
+      batch.update({'t': vec_t, 'pos':x})
+      result = predictor_update_fn(batch, model=model)
+      x = result['pos'].detach()
+      
+    if denoise:
+      result['pos'] = result['pos_mean']
+    return inverse_scaler(result), sde.N * (n_steps + 1)
 
   return pc_sampler
   

@@ -165,9 +165,9 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
       losses = torch.square(score*std + z)
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
     else:
-      g2 = sde.sde(torch.zeros_like(batch), t)[1] ** 2
+      g2 = sde.sde(torch.zeros_like(z), t[batch.nodeSegment()].unsqueeze(-1))[1] ** 2
       losses = torch.square(score+ z / std)
-      losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
+      losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2 * 0.01
     
     loss = torch.mean(losses)
     return loss
@@ -241,12 +241,11 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
       state['step'] += 1
       state['ema'].update(model.parameters())
     else:
-      with torch.no_grad():
-        ema = state['ema']
-        ema.store(model.parameters())
-        ema.copy_to(model.parameters())
-        loss = loss_fn(model, batch)
-        ema.restore(model.parameters())
+      ema = state['ema']
+      ema.store(model.parameters())
+      ema.copy_to(model.parameters())
+      loss = loss_fn(model, batch)
+      ema.restore(model.parameters())
 
     return loss
 
