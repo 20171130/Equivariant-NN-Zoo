@@ -97,7 +97,11 @@ class Batch(Data):
 
     def get(self, idx):
         dic = {}
+        
         for key, value in self.data.items():
+            if key == "edge_index":
+                start, end = self.edge_cumsum[idx], self.edge_cumsum[idx + 1]
+                dic[key] = value[:, start:end] - self.node_cumsum[idx]
             if not key in self.attrs:
                 continue
             if self.attrs[key][0] == "graph":
@@ -108,10 +112,7 @@ class Batch(Data):
                 elif self.attrs[key][0] == "edge":
                     cumsum = self.edge_cumsum
                 start, end = cumsum[idx], cumsum[idx + 1]
-            if key == "edge_index":
-                dic[key] = value[start:end] - cumsum[idx]
-            else:
-                dic[key] = value[start:end]
+            dic[key] = value[start:end]
         return Data(self.attrs, **dic)
 
     def index_select(self, idx):

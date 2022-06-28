@@ -2,7 +2,7 @@ from functools import partial
 from ..data import computeEdgeIndex
 from ml_collections.config_dict import ConfigDict
 import ase
-from .layer_configs import featureModel
+from .layer_configs import featureModel, addEdgeEmbedding
 from ..nn import PointwiseLinear, RadialBasisEncoding, GraphFeatureEmbedding
 from ..utils import insertAfter
 
@@ -35,7 +35,7 @@ def get_config(spec=''):
 
     model.n_dim = 32
     model.l_max = 2
-    model.r_max = 5.0 
+    model.r_max = 8.0 
     model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
@@ -46,10 +46,10 @@ def get_config(spec=''):
     data.std = 1.4 # such that the variance of pos is roughly 3
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = "qm9.hdf5"
+    data.path = "qm9_edge.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
-    data.key_map = {"Z": "atom_types", "R": "pos", "U": "total_energy"}
+ #   data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
+    data.key_map = {"Z": "atom_types", "R": "pos", "U": "total_energy", "node_attr": "bond_type"}
     
     if spec and 'profiling' in spec:
         data.n_train = 2048
@@ -116,7 +116,7 @@ def get_config(spec=''):
         time_embedding = None
     if not time_embedding is None:
         layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
-  
+    layer_configs = addEdgeEmbedding(layer_configs, num_bond_types=4)
     layer_configs.layers.append(
         (
             "score_output",

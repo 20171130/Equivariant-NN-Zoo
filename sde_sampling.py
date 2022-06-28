@@ -325,7 +325,6 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
     Returns:
       Samples, number of function evaluations.
     """
-    shifter = getScaler(1) # for zero center
     batch = batch.clone()
     shape = batch['pos'].shape
     device = batch['pos'].device
@@ -334,7 +333,6 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
       # Initial sample
       x = sde.prior_sampling(shape).to(device)
       batch['pos'] = x
-      batch = shifter(batch)
       timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
 
       for i in trange(sde.N):
@@ -344,7 +342,6 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
         batch['t'] = vec_t
         batch = corrector_update_fn(batch, model=model)
         batch = predictor_update_fn(batch, model=model)
-        batch = shifter(batch)
         
       x, x_mean = batch['pos'], batch['pos_mean']
       if denoise:

@@ -90,6 +90,8 @@ class Data(object):
         return [(key, value) for key, value in self.data.items()]
 
     def __setitem__(self, key, item):
+        if not isinstance(item, torch.Tensor):
+            item = torch.tensor(item)
         if key in self.attrs:
             irreps = self.attrs[key][1]
             if (

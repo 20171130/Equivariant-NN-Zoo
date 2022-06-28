@@ -120,6 +120,7 @@ def train(sde_config, e3_config):
     
   pbar = trange(initial_step, num_train_steps + 1)
   pbar.set_description(f'{FLAGS.name}')
+  
   for step in pbar:
     try:
       batch = next(train_iter).to(sde_config.device)
@@ -176,7 +177,6 @@ def train(sde_config, e3_config):
 def getDataLoaders(e3_config):
   data_config = e3_config.data_config
   dataset = CondensedDataset(**data_config)
-
   total_n = len(dataset)
   if (data_config.n_train + data_config.n_val) > total_n:
       raise ValueError(
@@ -196,9 +196,9 @@ def getDataLoaders(e3_config):
   val_idcs = idcs[
       data_config.n_train : data_config.n_train + data_config.n_val
   ]
-
   train_ds = dataset.index_select(train_idcs)
   eval_ds = dataset.index_select(val_idcs)
+
   dl_kwargs = dict(
       batch_size=e3_config.batch_size,
       num_workers=FLAGS.dataloader_num_workers,
