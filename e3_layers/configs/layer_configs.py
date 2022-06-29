@@ -15,7 +15,8 @@ def featureModel(
     num_layers,
     node_attrs,
     r_max,
-    edge_spherical=None
+    edge_spherical=None,
+    avg_num_neighbors=10
 ):
     config = ConfigDict()
 
@@ -75,7 +76,7 @@ def featureModel(
     }
     conv = {
         "module": FactorizedConvolution,
-        "avg_num_neighbors": 10,
+        "avg_num_neighbors": avg_num_neighbors,
         "use_sc": True,
         "invariant_layers": 3,
         "invariant_neurons": n_dim,

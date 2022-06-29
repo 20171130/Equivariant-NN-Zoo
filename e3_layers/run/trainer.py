@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from torch_ema import ExponentialMovingAverage
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from e3nn.o3 import Irreps
 from ml_collections.config_dict import ConfigDict
 
@@ -101,16 +102,16 @@ class Trainer:
             logger.setLevel(level=logging.WARNING)
         self.logger = logger
 
+        self.loader_rng = (
+            torch.Generator()
+        )  # used for generating seeds for each dataloader worker process
+        self.split_rng = torch.Generator()
+        
         if FLAGS.seed is not None:
             torch.manual_seed(FLAGS.seed)
             np.random.seed(FLAGS.seed)
             self.split_rng.manual_seed(FLAGS.seed)
             self.loader_rng.manual_seed(FLAGS.seed + self.rank)
-
-        self.loader_rng = (
-            torch.Generator()
-        )  # used for generating seeds for each dataloader worker process
-        self.split_rng = torch.Generator()
 
         # sort out all the other parameters
         # for samplers, optimizer and scheduler
@@ -132,6 +133,7 @@ class Trainer:
     def init_objects(self):
 
         self.model.to(self.torch_device)
+        self.model = DDP(self.model)
 
         self.num_weights = sum(p.numel() for p in self.model.parameters())
         self.logger.info(f"Number of weights: {self.num_weights}")
@@ -227,6 +229,10 @@ class Trainer:
             if validation_dataset is None:
                 # Sample both from `dataset`:
                 total_n = len(dataset)
+                if isinstance(data_config.n_train, float):
+                    data_config.n_train = int(data_config.n_train * total_n)
+                if isinstance(data_config.n_val, float):
+                    data_config.n_val = int(data_config.n_val * total_n)
                 if (data_config.n_train + data_config.n_val) > total_n:
                     raise ValueError(
                         "too little data for training and validation. please reduce n_train and n_val"

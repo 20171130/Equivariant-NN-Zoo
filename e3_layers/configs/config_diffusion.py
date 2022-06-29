@@ -30,7 +30,7 @@ def get_config(spec=''):
   #  config.metrics_components = {"dipole": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
-    config.lr_scheduler_patience = 15 # number of eval steps
+    config.lr_scheduler_patience = 1
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.0
     config.saveMol = saveMol
@@ -51,7 +51,7 @@ def get_config(spec=''):
     data.path = "qm9_edge.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
     if not 'gcn' in spec:
-        data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
+        data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
     data.key_map = {"Z": "species", "R": "pos", "U": "total_energy", "edge_attr": "bond_type"}
     
     if spec and 'profiling' in spec:

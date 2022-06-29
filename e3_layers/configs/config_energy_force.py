@@ -14,7 +14,7 @@ def get_config(spec=None):
     config.data_config = data
     config.model_config = model
 
-    config.epoch_subdivision = 20
+    config.epoch_subdivision = 10
     config.learning_rate = 1e-2
     config.batch_size = 128
 
@@ -49,8 +49,9 @@ def get_config(spec=None):
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
     
-    override = eval(spec)
-    config.update_from_flattened_dict(override)
+    if spec:
+        override = eval(spec)
+        config.update_from_flattened_dict(override)
 
     edge_spherical = "1x0e+1x1o+1x2e"
     layer_configs = featureModel(

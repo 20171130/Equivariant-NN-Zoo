@@ -80,6 +80,11 @@ def run(rank, config):
         else:
             trainer = Trainer.from_file(FLAGS.resume_from, **dict(config))
         data_config = config.data_config
+        if isinstance(data_config.path, tuple) or isinstance(data_config.path, list):
+            gcd = math.gcd(rank, len(data_config.path))
+            start = (rank%gcd) * (len(data_config.path)//gcd)
+            end = (rank%gcd + 1)* (len(data_config.path)//gcd)
+            data_config.path = data_config.path[start: end]
         dataset = CondensedDataset(**data_config)
         trainer.set_dataset(dataset, validation_dataset=None)
         logging.info("Successfully built the network...")

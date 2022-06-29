@@ -6,19 +6,18 @@ import logging
 from tqdm import tqdm, trange
 from pathlib import Path
 
-import tensorflow as tf
 import numpy as np
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 import wandb
-# Keep the import below for registering all model definitions
-from models import ddpm, ncsnv2, ncsnpp
 import sde_utils as losses
 import sde_utils as sde_lib
 from sde_utils import getScaler
 import sde_sampling as sampling
-from models import utils as mutils
+
 from models.ema import ExponentialMovingAverage
-import datasets as datasets 
 import likelihood as likelihood
 from utils import save_checkpoint, restore_checkpoint
 
@@ -27,13 +26,13 @@ from ml_collections.config_flags import config_flags
 
 from e3_layers.utils import build, pruneArgs
 from e3_layers import configs
-from e3_layers.data import CondensedDataset, DataLoader, Batch, computeEdgeVector
+from e3_layers.data import Batch, computeEdgeVector, getDataIters
 
 import pdb
 
 FLAGS = flags.FLAGS
 
-def train(sde_config, e3_config):
+def train(e3_config, sde_config):
   """Runs the training pipeline.
 
   Args:
@@ -42,11 +41,19 @@ def train(sde_config, e3_config):
   """
   workdir = FLAGS.workdir
   saveMol = e3_config.saveMol
+  device = torch.device(dist.get_rank())
+  
+  if dist.get_rank() == 0:
+    # Create checkpoints directory
+    checkpoint_dir = os.path.join(FLAGS.workdir, "checkpoints")
+    # Intermediate checkpoints to resume training after pre-emption in cloud environments
+    checkpoint_meta_dir = os.path.join(FLAGS.workdir, "checkpoints-meta", "checkpoint.pth")
+    Path(checkpoint_dir).mkdir(exist_ok=True)
+    Path(os.path.dirname(checkpoint_meta_dir)).mkdir(exist_ok=True)
   
   # Initialize model.
-  score_model = build(e3_config.model_config).to(sde_config.device)
+  score_model = build(e3_config.model_config).to(device)
   ema = ExponentialMovingAverage(score_model.parameters(), decay=sde_config.model.ema_rate)
-  
   optim = getattr(torch.optim, e3_config.optimizer_name)
   kwargs = pruneArgs(prefix="optimizer", **e3_config)
   kwargs.pop('name')
@@ -54,17 +61,12 @@ def train(sde_config, e3_config):
       params=score_model.parameters(), lr=e3_config.learning_rate, **kwargs
   )
   state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0)
-
-  # Create checkpoints directory
-  checkpoint_dir = os.path.join(workdir, "checkpoints")
-  # Intermediate checkpoints to resume training after pre-emption in cloud environments
   checkpoint_meta_dir = os.path.join(workdir, "checkpoints-meta", "checkpoint.pth")
-  Path(checkpoint_dir).mkdir(exist_ok=True)
-  Path(os.path.dirname(checkpoint_meta_dir)).mkdir(exist_ok=True)
   # Resume training when intermediate checkpoints are detected
   state = restore_checkpoint(checkpoint_meta_dir, state, sde_config.device)
   initial_step = int(state['step'])
-
+  score_model = DDP(score_model)
+    
   # Setup SDEs
   if sde_config.training.sde.lower() == 'vpsde':
     sde = sde_lib.VPSDE(beta_min=sde_config.model.beta_min, beta_max=sde_config.model.beta_max, N=sde_config.model.num_scales)
@@ -84,13 +86,14 @@ def train(sde_config, e3_config):
   likelihood_weighting = sde_config.training.likelihood_weighting
   train_step_fn = losses.get_step_fn(sde, train=True, optimizer=optimizer,
                                      reduce_mean=reduce_mean, continuous=continuous,
-                                     likelihood_weighting=likelihood_weighting, grad_clid_norm=e3_config.grad_clid_norm)
+                                     likelihood_weighting=likelihood_weighting,
+                                     grad_clid_norm=e3_config.grad_clid_norm,
+                                     grad_acc = e3_config.grad_acc)
   eval_step_fn = losses.get_step_fn(sde, train=False, optimizer=optimizer,
                                     reduce_mean=reduce_mean, continuous=continuous,
                                     likelihood_weighting=likelihood_weighting)
 
-  # Build data iterators
-  train_iter, eval_iter = getDataLoaders(e3_config)
+  train_iter, eval_iter = getDataIters(e3_config)
   
   # Create data normalizer and its inverse
   std = getattr(e3_config.data_config, 'std', 1)
@@ -114,38 +117,42 @@ def train(sde_config, e3_config):
   pbar = trange(initial_step, num_train_steps + 1)
   pbar.set_description(f'{FLAGS.name}')
   
+  loss_lst = []
+  eval_loss_lst = []
   for step in pbar:
-    try:
-      batch = next(train_iter).to(sde_config.device)
-    except StopIteration:
-      train_iter, _ = getDataLoaders(e3_config)
-      batch = next(train_iter).to(sde_config.device)
+    batch = next(train_iter).to(device)
     batch = scaler(batch)
     # Execute one training step
-    loss = train_step_fn(state, batch)
-    if step % FLAGS.log_period == 0:
-      logging.info("step: %d, training_loss: %.5e" % (step, loss.item()))
-      wandb.log(dict(loss = loss.item(), optim_step = step))
+    
+    loss = train_step_fn(state, batch).item()
+    loss_lst.append(loss)
+    if step % FLAGS.log_period == 0 and step>0:
+      logging.info("step: %d, training_loss: %.5e" % (step, sum(loss_lst)/len(loss_lst)))
+      wandb.log(dict(loss = sum(loss_lst)/len(loss_lst), optim_step = step))
+      loss_lst = []
 
     # Save a temporary checkpoint to resume training after pre-emption periodically
-    if step != 0 and step % FLAGS.save_period == 0:
+    if step != 0 and step % FLAGS.save_period == 0 and dist.get_rank() == 0:
       save_checkpoint(checkpoint_meta_dir, state)
 
     # Report the loss on an evaluation dataset periodically
     if step % FLAGS.eval_period == 0:
-      try:
-        eval_batch = next(eval_iter).to(sde_config.device)
-      except StopIteration:
-        _, eval_iter = getDataLoaders(e3_config)
-        eval_batch = next(eval_iter).to(sde_config.device)
+      eval_batch = next(eval_iter).to(device)
       eval_batch = scaler(eval_batch)
-      eval_loss = eval_step_fn(state, eval_batch)
-      logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss.item()))
-      wandb.log(dict(eval_loss = eval_loss.item(), lr = optimizer.param_groups[0]["lr"], optim_step = step))
-      lr_sched.step(metrics=eval_loss.item())
+      eval_loss = eval_step_fn(state, eval_batch).item()
+      eval_loss_lst.append(eval_loss)
       
     # Save a checkpoint periodically and generate samples if needed
-    if step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps:
+    if (step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps) and dist.get_rank()==0:
+      if len(eval_loss_lst)> 0:
+        eval_loss_mean = sum(eval_loss_lst)/len(eval_loss_lst)
+      else:
+        eval_loss_mean = float('inf')
+      logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss_mean))
+      lr_sched.step(metrics=eval_loss_mean)
+      eval_loss_lst = []
+      wandb.log(dict(eval_loss = eval_loss_mean, lr = optimizer.param_groups[0]["lr"], optim_step = step))
+      
       # Save the checkpoint.
       save_step = step // FLAGS.save_period 
       save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{save_step}.pth'), state)
@@ -155,11 +162,12 @@ def train(sde_config, e3_config):
         ema.store(score_model.parameters())
         ema.copy_to(score_model.parameters())
         ema.restore(score_model.parameters())
+        sample_dir = os.path.join(workdir, "samples")
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
-        Path(this_sample_dir).mkdir(exist_ok=True)
+        Path(this_sample_dir).mkdir(parents=True, exist_ok=True)
         
-        saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth.gro')
-        wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'ground_truth.gro'))})
+        filenmae = saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth')
+        wandb.log({'ground_truth': wandb.Molecule(filenmae)})
 
         n_samples = 5
         lst = [batch[0] for i in range(n_samples)]
@@ -179,56 +187,9 @@ def train(sde_config, e3_config):
             min_loss = loss
             argmin = i
 
-        filename = f'{step}_{sum_loss/n_samples}.gro'
-        saveMol(samples_batch, idx=i, workdir=FLAGS.workdir, filename=filename)
-        wandb.log({'sample': wandb.Molecule(os.path.join(FLAGS.workdir, filename))})
-          
-          
-def getDataLoaders(e3_config):
-  data_config = e3_config.data_config
-  dataset = CondensedDataset(**data_config)
-  total_n = len(dataset)
-  if (data_config.n_train + data_config.n_val) > total_n:
-      raise ValueError(
-          "too little data for training and validation. please reduce n_train and n_val"
-      )
-
-  if data_config.train_val_split == "random":
-      idcs = torch.randperm(total_n)
-  elif data_config.train_val_split == "sequential":
-      idcs = torch.arange(total_n)
-  else:
-      raise NotImplementedError(
-          f"splitting mode {data_config.train_val_split} not implemented"
-      )
-
-  train_idcs = idcs[: data_config.n_train]
-  val_idcs = idcs[
-      data_config.n_train : data_config.n_train + data_config.n_val
-  ]
-  train_ds = dataset.index_select(train_idcs)
-  eval_ds = dataset.index_select(val_idcs)
-
-  dl_kwargs = dict(
-      batch_size=e3_config.batch_size,
-      num_workers=FLAGS.dataloader_num_workers,
-      pin_memory=True,
-      # avoid getting stuck
-      timeout=(10 if FLAGS.dataloader_num_workers > 0 else 0)
-  )
-  train_dl = DataLoader(
-      dataset=dataset,
-      shuffle=True,
-      **dl_kwargs,
-  )
-  eval_dl = DataLoader(
-      dataset=dataset,
-      shuffle=False, 
-      **dl_kwargs,
-  )
-  train_iter, eval_iter = iter(train_dl), iter(eval_dl)
-
-  return train_iter, eval_iter
+        filename = f'{step}_{sum_loss/n_samples}'
+        filenmae = saveMol(samples_batch, idx=i, workdir=FLAGS.workdir, filename=filename)
+        wandb.log({'sample': wandb.Molecule(filenmae)})
         
 FLAGS = flags.FLAGS
 
@@ -246,50 +207,36 @@ flags.DEFINE_integer(
 flags.DEFINE_boolean("wandb", False, "If logging with wandb.")
 flags.DEFINE_string("wandb_project", None, "The name of the wandb project.")
 flags.DEFINE_string("verbose", "INFO", "Logging verbosity.")
-flags.DEFINE_integer("log_period", 100, "Number of steps.")
-flags.DEFINE_integer("eval_period", 100, "Number of steps.")
-flags.DEFINE_integer("save_period", 2000, "Number of steps.")
+flags.DEFINE_integer("log_period", 100, "Number of training steps.")
+flags.DEFINE_integer("eval_period", 20, "Number of training steps.")
+flags.DEFINE_integer("save_period", 2000, "Number of training steps.")
+
+flags.DEFINE_integer("world_size", 1, "Number of processes.")
+flags.DEFINE_string("master_addr", "127.0.0.1", "The address to use.")
+flags.DEFINE_string("master_port", "10000", "The port to use.")
 flags.mark_flags_as_required(["sde_config", "e3_config"])
 
 
-def main(argv):
-  # prevent tf from taking up all GPU memory, causing torch to raise OOM
-  gpus = tf.config.list_physical_devices('GPU')
-  if gpus:
-    try:
-      # Currently, memory growth needs to be the same across GPUs
-      for gpu in gpus:
-        tf.config.experimental.set_memory_growth(gpu, True)
-      logical_gpus = tf.config.list_logical_devices('GPU')
-      print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-      raise e
-  
-      
-  FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
-  # Create the working directory
-  Path(FLAGS.workdir).mkdir(exist_ok=True)
-  # Set logger so that it outputs to both console and file
-  # Make logging work for both disk and Google Cloud Storage
-  gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
-  handler = logging.StreamHandler(gfile_stream)
-  formatter = logging.Formatter('%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
-  handler.setFormatter(formatter)
+def main(rank, e3_config):
   logger = logging.getLogger()
-  logger.addHandler(handler)
-  logger.setLevel(FLAGS.verbose)
-  # Run the training pipeline
-
-  config_name = FLAGS.e3_config
-  e3_config = getattr(configs, config_name, None)
-  assert not e3_config is None, f"Config {config_name} not found."
-  e3_config = e3_config(FLAGS.config_spec)
-  
-  FLAGS.sde_config.training.batch_size = e3_config.batch_size
-  
+  if rank == 0:
+      # Set logger so that it outputs to both console and file
+      # Make logging work for both disk and Google Cloud Storage
+      gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
+      handler = logging.StreamHandler(gfile_stream)
+      formatter = logging.Formatter('%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
+      handler.setFormatter(formatter)
+      for handler in logger.handlers:
+        handler.setFormatter(formatter)
+      logger.addHandler(handler)
+      logger.setLevel(getattr(logging, FLAGS.verbose))
+      # Run the training pipeline
+  else:
+      logger.setLevel(logging.WARNING)
+      
   config_dict = {'e3': e3_config.to_dict(), 'sde': FLAGS.sde_config.to_dict()}
   run_id = wandb.util.generate_id()
-  if FLAGS.wandb:
+  if FLAGS.wandb and rank == 0:
     mode = 'online'
   else:
     mode = 'disabled'
@@ -304,12 +251,35 @@ def main(argv):
       settings=wandb.Settings(),
   )
 
-  if FLAGS.seed is not None:
-    torch.manual_seed(FLAGS.seed)
-    np.random.seed(FLAGS.seed)
+  torch.manual_seed(FLAGS.seed)
+  np.random.seed(FLAGS.seed)
+  
+  mp.set_start_method("fork", force=True)
+  dist.init_process_group("nccl", rank=rank, world_size=FLAGS.world_size)
           
-  train(FLAGS.sde_config, e3_config)
+  train(e3_config, FLAGS.sde_config)
 
+
+def launch_mp(argv):
+    world_size = FLAGS.world_size
+    os.environ["MASTER_ADDR"] = FLAGS.master_addr
+    os.environ["MASTER_PORT"] = FLAGS.master_port
+    FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
+    # Create the working directory
+    Path(FLAGS.workdir).mkdir(exist_ok=True)
+
+    config_name = FLAGS.e3_config
+    e3_config = getattr(configs, config_name, None)
+    assert not e3_config is None, f"Config {config_name} not found."
+    e3_config = e3_config(FLAGS.config_spec)
+
+    FLAGS.sde_config.training.batch_size = e3_config.batch_size
+  
+      
+    if world_size == 1:
+        main(0, e3_config)
+    else:
+        mp.spawn(main, args=(e3_config), nprocs=config.world_size, join=True)
 
 if __name__ == "__main__":
-  app.run(main)
+    app.run(launch_mp)
