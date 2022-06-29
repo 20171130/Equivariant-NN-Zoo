@@ -19,14 +19,14 @@ class Batch(Data):
         """
         super().__init__(attrs, **tensors)
 
-    def computeCumsums(self):
-        if "_n_nodes" in self.data:
+    def computeCumsums(self, force_recompute=True):
+        if "_n_nodes" in self.data and (force_recompute or not hasattr(self, 'node_cumsum')):
             self.n_graphs = self.data["_n_nodes"].shape[0]
             self.node_cumsum = [0]
             for i in range(self.n_graphs):
                 self.node_cumsum.append(self.node_cumsum[-1] + self.data["_n_nodes"][i].item())
             self.n_nodes = self.node_cumsum[-1]
-        if "_n_edges" in self.data:
+        if "_n_edges" in self.data and (force_recompute or not hasattr(self, 'edge_cumsum')):
             self.n_graphs = self.data["_n_edges"].shape[0]
             self.edge_cumsum = [0]
             for i in range(self.n_graphs):

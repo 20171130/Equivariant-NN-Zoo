@@ -168,7 +168,7 @@ def addEnergyOutput(config, shifts=None, output_key='total_energy'):
     return config
 
 
-def addForceOutput(config, gradients = 'forces', y='energy'):
+def addForceOutput(config, gradients = 'forces', y='energy', sign=-1.0):
     config = config.to_dict()
     layers = config.pop('layers')
     module = config.pop('module')
@@ -181,6 +181,7 @@ def addForceOutput(config, gradients = 'forces', y='energy'):
             "x": ("1x1o", "pos"),
             "y": ("1x0e", y),
             'gradients': ("1x1o", gradients),
+            'sign': sign
         }
     )
     return config

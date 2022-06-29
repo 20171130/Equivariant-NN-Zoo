@@ -116,12 +116,24 @@ The key `_rotation_matrix` is reserved for equivariance tests. Do not override t
 The `e3_layers.data.CondensedDataset` inherits from `e3_layers.data.Batch`.
 Refer to `data.ipynb` for the scripts to convert various data formats to the HDF5 format that this repository uses.
 
-# Constructing Your Own Models
+# Training Your Own Models 
 To add a new config, you can add a python file in the configs directory that defines `get_config()` and mention it in `configs/__init__.py`.
 There are already some examples in the directory that you can refer to.
 The `get_config` function should return an instance of `ml_collections.ConfigDict`.
 You can fully customize the model architecture by specifying `config.model_config`.
 The model config contains arguments for each layer in the model, and its structure determines the network module hierarchy.
+## Specifying Datasets
+You may specify a file or some files in a directory as the dataset.
+```
+config.data_config.path = 'dataest.hdf5'
+
+## all files in (subfolders of) data/
+config.data_config.path = 'data/'
+
+## all .hdf5 files in data/, you may use any python regular expression.
+config.data_config.path = 'data/:.+\.hdf5'
+```
+You may set `data_config.reload=True` to reload the datasets in the folder every epoch.
 
 # Modules Provided
 

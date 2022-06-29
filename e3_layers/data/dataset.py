@@ -14,6 +14,9 @@ import numpy as np
 
 import torch.utils.data
 from e3nn import o3
+import os
+import re
+import logging
 
 
 class CondensedDataset(Batch):
@@ -21,11 +24,25 @@ class CondensedDataset(Batch):
     A e3_layers.data.Batch with preprocessing, statistics and key mapping.
     """
 
-    def __init__(self, path=None, key_map={}, type_names=None, preprocess=[], **kwargs):
+    def __init__(self, path=None, data={}, attrs={}, key_map={}, type_names=None, preprocess=[], **kwargs):
         if not path is None:
+            data, attrs = CondensedDataset.load(path)
+        super().__init__(attrs, **data)
+        self.data = keyMap(self.data, key_map)
+        self.attrs = keyMap(self.attrs, key_map)
+            
+        if type_names == None:
+            type_names = ase.atom.atomic_numbers.keys()
+        self.type_names = type_names
+        self.preprocess = preprocess
+        self.kwargs = kwargs
+        
+    @staticmethod
+    def load(path):
+        def loadFile(file):
             data = {}
             attrs = {}
-            with h5py.File(path, "r") as file:
+            with h5py.File(file, "r") as file:
                 for key in file.keys():
                     item = torch.tensor(file[key][:])
                     if item.dtype == torch.int32:
@@ -35,23 +52,35 @@ class CondensedDataset(Batch):
                     data[key] = item
                 for key in file.attrs.keys():
                     attrs[key] = file.attrs[key]
-            super().__init__(attrs, **data)
-            self.data = keyMap(self.data, key_map)
-            self.attrs = keyMap(self.attrs, key_map)
+            return data, attrs
+          
+        path = path.split(':')
+        if len(path) == 2:
+            path, regexp = path
+            regexp = re.compile(regexp)
+        else:
+            path = path[0]
+            regexp = None
             
-        if type_names == None:
-            type_names = ase.atom.atomic_numbers.keys()
-        self.type_names = type_names
-
-        self.preprocess = preprocess
-        """
-        # preprocessing on the fly is preferred
-        batch = self
-        for func in preprocess:
-            batch = func(batch)
-        self.data = batch.data
-        self.attrs = batch.attrs
-        """
+        if os.path.isfile(path):
+            data, attrs = loadFile(path)
+        elif os.path.isdir(path):
+            data = {}
+            attrs = {}
+            for root, dirs, files in os.walk(path):
+                for file in files:
+                    file = os.path.join(root, file)
+                    if not regexp is None and regexp.match(file) is None:
+                        continue
+                    _data, _attrs = loadFile(file)
+                    data.update(_data)
+                    attrs.update(_attrs)
+        else:
+            raise FileNotFoundError(path)
+        if len(data) == 0:
+            logging.warning('No dataset file is found.')
+        return data, attrs
+            
     
     def __getitem__(self, idx):
         if isinstance(idx, str):
@@ -159,10 +188,8 @@ class CondensedDataset(Batch):
 
     def index_select(self, idx):
         batch = super().index_select(idx)
-        dataset = CondensedDataset(type_names=self.type_names, preprocess=self.preprocess)
-        dataset.attrs = batch.attrs
-        dataset.data = batch.data
-        dataset.computeCumsums()
+        dataset = CondensedDataset(type_names=self.type_names,
+                                   preprocess=self.preprocess, data=batch.data, attrs=batch.attrs)
         return dataset
 
     def _per_node_statistics(

@@ -22,7 +22,7 @@ import torch.distributed as dist
 from e3nn.o3 import Irreps
 from ml_collections.config_dict import ConfigDict
 
-from ..data import DataLoader
+from ..data import DataLoader, CondensedDataset
 from ..utils import (
     build,
     pruneArgs,
@@ -487,6 +487,11 @@ class Trainer:
             if self.lr_scheduler_name == "ReduceLROnPlateau":
                 self.lr_sched.step(metrics=self.mae_dict[self.metrics_key])
         self.iepoch += 1
+        
+        data_config = self.data_config
+        if 'reload' in data_config and data_config.reload:
+            dataset = CondensedDataset(**data_config)
+            self.set_dataset(dataset, validation_dataset=None)
 
     @property
     def epoch_logger(self):
