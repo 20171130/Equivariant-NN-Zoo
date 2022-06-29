@@ -87,9 +87,8 @@ The prior for position is `randn(n_nodes, 3)`, so you need to set the argument `
 You may set up `data.std` in the config file to scale the input by `1/data.std`, such that the variance is similar before and after perturbation.
 Run
 ```
- python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion    --name test   --wandb_project diffusion --config_spec gcn_embed_time_in_nodes --wandb
+ python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion    --name test   --wandb_project diffusion --config_spec embed_time_in_nodes --wandb
 ```
-It is normal that the loss does not decrease at all for the first few thousand steps.
 The script assumes there is a tensor named `pos` and reserves the key `t` for time and `species` for molecule/atom/residual type.
 
 

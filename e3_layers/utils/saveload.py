@@ -33,6 +33,51 @@ def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp.gro'):
  #   lines.append('0 0 0')
     with open(os.path.join(workdir, filename), 'w') as f:
         f.write('\n'.join(lines))
+      
+def saveProtein(batch, path, idx=0):
+    aa_names = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
+         'ILE': 'I', 'PRO': 'P', 'THR': 'T', 'PHE': 'F', 'ASN': 'N', 
+         'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W', 
+         'ALA': 'A', 'VAL':'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'}
+    aa_ids = {i:key for i, key in enumerate(aa_names.keys())}
+    def id2name(x):
+        return aa_ids[x-1]
+    with open(path, "w") as f:
+        for i in range(batch['_n_nodes'][idx]):
+            j = [0]* 12
+            j[0] = 'ATOM'
+            j[0] = j[0].ljust(6)#atom#6s
+            
+            j[1] = f'{i+1}'
+            j[1] = j[1].rjust(5)#aomnum#5d
+            
+            j[2] = 'CA'
+            j[2] = j[2].center(4)#atomname$#4s
+            
+            j[3] = id2name(batch['species'][batch.node_cumsum[idx]+i].item())
+            j[3] = j[3].ljust(3)#resname#1s
+            
+            j[4] = 'A'
+            j[4] = j[4].rjust(1) #Astring
+            
+            j[5] = f'{i+1}'
+            j[5] = j[5].rjust(4) #resnum
+            
+            x, y, z = batch['pos'][batch.node_cumsum[idx]+i]
+            j[6] = str('%8.3f' % (float(x))).rjust(8) #x
+            j[7] = str('%8.3f' % (float(y))).rjust(8)#y
+            j[8] = str('%8.3f' % (float(z))).rjust(8) #z\
+            
+            j[9] = f'{1.0}'
+            j[9] =str('%6.2f'%(float(j[9]))).rjust(6)#occ
+            
+            j[10] = f'0.00'
+            j[10]=str('%6.2f'%(float(j[10]))).ljust(6)#temp
+            
+            j[11] = 'C'
+            j[11]=j[11].rjust(12)#elname    
+            f.write("%s%s %s %s %s%s    %s%s%s%s%s%s\n"%(j[0],j[1],j[2],j[3],j[4],j[5],j[6],j[7],j[8],j[9],j[10],j[11]))
+        f.write('TER\nEND\n')
 
 def _delete_files_if_exist(paths):
     # clean up
