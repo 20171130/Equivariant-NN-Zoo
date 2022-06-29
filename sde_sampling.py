@@ -246,19 +246,20 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
     x = sde.prior_sampling(shape).to(device)
     timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
 
-    for i in trange(sde.N):
-      t = timesteps[i]
-      vec_t = torch.ones(len(batch), device=t.device) * t
-      
-      batch = clean_batch.clone()
-      batch.update({'t': vec_t, 'pos':x})
-      result = corrector_update_fn(batch, model=model)
-      x = result['pos'].detach()
-      
-      batch = clean_batch.clone()
-      batch.update({'t': vec_t, 'pos':x})
-      result = predictor_update_fn(batch, model=model)
-      x = result['pos'].detach()
+    with torch.no_grad():
+      for i in trange(sde.N):
+        t = timesteps[i]
+        vec_t = torch.ones(len(batch), device=t.device) * t
+
+        batch = clean_batch.clone()
+        batch.update({'t': vec_t, 'pos':x})
+        result = corrector_update_fn(batch, model=model)
+        x = result['pos'].detach()
+
+        batch = clean_batch.clone()
+        batch.update({'t': vec_t, 'pos':x})
+        result = predictor_update_fn(batch, model=model)
+        x = result['pos'].detach()
       
     if denoise:
       result['pos'] = result['pos_mean']

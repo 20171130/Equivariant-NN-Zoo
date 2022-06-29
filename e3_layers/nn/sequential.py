@@ -47,18 +47,18 @@ class SequentialGraphNetwork(torch.nn.Sequential):
     def __init__(self, **config):
         layer_configs = OrderedDict(config["layers"])
         self.layers = []
-        self.modules = {}
+        modules = {}
         for i, (key, value) in enumerate(layer_configs.items()):
             if isinstance(value, ConfigDict) or isinstance(value, dict):
                 module = build(value, **config)
-                self.modules[key] = module
+                modules[key] = module
                 self.layers += [(key, module)]
             elif callable(value):
                 self.layers += [(key, value)]
             else:
                 raise TypeError("invalid config node")
 
-        modules = OrderedDict(self.modules)
+        modules = OrderedDict(modules)
         super().__init__(modules)
 
     def forward(self, batch):

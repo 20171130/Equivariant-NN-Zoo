@@ -44,7 +44,12 @@ def evaluate(argv):
     device = torch.device('cuda')
     model.to(device=device)
     if FLAGS.model_path:
-        model_state_dict = torch.load(FLAGS.model_path, map_location=device)
+        state_dict = torch.load(FLAGS.model_path, map_location=device)
+        model_state_dict = {}
+        for key, value in state_dict.items():
+            if key[:7] == 'module.': # remove DDP wrappers
+                key = key[7:]
+            model_state_dict[key] = value
         model.load_state_dict(model_state_dict)
     
     data_config = config.data_config

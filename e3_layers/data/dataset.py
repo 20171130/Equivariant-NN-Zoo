@@ -27,6 +27,8 @@ class CondensedDataset(Batch):
     def __init__(self, path=None, data={}, attrs={}, key_map={}, type_names=None, preprocess=[], **kwargs):
         if not path is None:
             data, attrs = CondensedDataset.load(path)
+            if isinstance(data, list):
+                data = Batch.from_data_list(data, attrs).data
         super().__init__(attrs, **data)
         self.data = keyMap(self.data, key_map)
         self.attrs = keyMap(self.attrs, key_map)
@@ -39,8 +41,8 @@ class CondensedDataset(Batch):
         
     @staticmethod
     def load(path):
-        logging.info(f'Loading {path}')
         def loadFile(file):
+            logging.info(f'Loading {path}')
             data = {}
             attrs = {}
             with h5py.File(file, "r") as file:
@@ -53,34 +55,43 @@ class CondensedDataset(Batch):
                     data[key] = item
                 for key in file.attrs.keys():
                     attrs[key] = file.attrs[key]
+            logging.info(f'Loaded {path}')
             return data, attrs
           
-        path = path.split(':')
-        if len(path) == 2:
-            path, regexp = path
-            regexp = re.compile(regexp)
-        else:
-            path = path[0]
-            regexp = None
-            
-        if os.path.isfile(path):
-            data, attrs = loadFile(path)
-        elif os.path.isdir(path):
-            data = {}
+        if isinstance(path, str):
+            path = path.split(':')
+            if len(path) == 2:
+                path, regexp = path
+                regexp = re.compile(regexp)
+            else:
+                path = path[0]
+                regexp = None
+            if os.path.isdir(path):
+                data = []
+                attrs = {}
+                for root, dirs, files in os.walk(path):
+                    for file in files:
+                        file = os.path.join(root, file)
+                        if not regexp is None and regexp.match(file) is None:
+                            continue
+                        _data, _attrs = loadFile(file)
+                        data.append(_data)
+                        attrs.update(_attrs)
+            else:
+                data, attrs = loadFile(path)
+        else: # is a list
+            data = []
             attrs = {}
-            for root, dirs, files in os.walk(path):
-                for file in files:
-                    file = os.path.join(root, file)
-                    if not regexp is None and regexp.match(file) is None:
-                        continue
-                    _data, _attrs = loadFile(file)
-                    data.update(_data)
-                    attrs.update(_attrs)
-        else:
-            raise FileNotFoundError(path)
+            for item in path:
+                x, y = CondensedDataset.load(item)
+                if isinstance(x, list):
+                    data += x
+                else:
+                    data.append(x)
+                attrs.update(y)
+                
         if len(data) == 0:
-            logging.warning('No dataset file is found.')
-        logging.info(f'Loaded {path}')
+            logging.warning(f'No dataset file is found in {path}.')
         return data, attrs
             
     

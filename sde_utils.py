@@ -163,10 +163,14 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     score = score_fn(batch_perturbed)['score']
     if not likelihood_weighting:
       losses = torch.square(score*std + z)
+      if 'pos_mask' in batch:
+          losses = losses * (1. - batch['pos_mask'])
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
     else:
       g2 = sde.sde(torch.zeros_like(z), t[batch.nodeSegment()].unsqueeze(-1))[1] ** 2
       losses = torch.square(score+ z / std)
+      if 'pos_mask' in batch:
+          losses = losses * (1. - batch['pos_mask'])
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2 * 0.01
     
     loss = torch.mean(losses)
@@ -189,7 +193,7 @@ def get_score_fn(sde, model, train=False, continuous=False):
 
 
 def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
-                likelihood_weighting=False, grad_clid_norm=None):
+                likelihood_weighting=False, grad_clid_norm=None, grad_acc=1):
   """Create a one-step training/evaluation function.
 
   Args:
@@ -232,12 +236,13 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
     model = state['model']
     if train:
       optimizer = state['optimizer']
-      optimizer.zero_grad()
       loss = loss_fn(model, batch)
       loss.backward()
       if not grad_clid_norm is None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clid_norm)
-      optimizer.step()
+      if not state['step']==0 and state['step']%grad_acc==0:
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
       state['step'] += 1
       state['ema'].update(model.parameters())
     else:

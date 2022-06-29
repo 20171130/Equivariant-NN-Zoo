@@ -4,7 +4,7 @@ Thie repository provides high-level neural network layers for constructing SOTA 
 It also provides examples for several applications, such as potential energy surface modeling, dipole prediction, hamiltonian prediction, as well as [score-based](https://yang-song.github.io/blog/2021/score/) conformation generation.
 Some codes are modified from [Nequip](https://github.com/mir-group/nequip).
 The notebook for infer matrix transformation from data is modified from scripts written by Mario Geiger.
-The script `sde.py` is modified from https://github.com/yang-song/score_sde_pytorch.
+The scripts related to score based generative modeling are modified from https://github.com/yang-song/score_sde_pytorch.
 
 # Installation
 Once the environment is prepared, you can run this repository. There is no need to install this repository itself.
@@ -82,6 +82,9 @@ Run `python3 train.py --config config_hamiltonian`.
 Notice that this config only works for H2O computed in ORCA convention.
 The accuracy is comprable (MAE 1.7e-5 Hatree) to [PhiSNet](https://proceedings.neurips.cc/paper/2021/hash/78f1893678afbeaa90b1fa01b9cfb860-Abstract.html) on the water dataset it used.
 ## Score Based Generative Model (continous Variance-Perserving-Stochastic-Differential-Equation)
+![A sample from the model.](images/mol1.png)
+![A sample from the model.](images/mol2.png)
+
 First, clone https://github.com/yang-song/score_sde_pytorch and add it to your environment variable `PYTHONPATH`.
 The prior for position is `randn(n_nodes, 3)`, so you need to set the argument `r_max` at least 7.
 You may set up `data.std` in the config file to scale the input by `1/data.std`, such that the variance is similar before and after perturbation.
@@ -90,8 +93,9 @@ Run
 # small organic molecules
  python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion    --name test   --wandb_project diffusion --config_spec embed_time_in_nodes --wandb
  
- # proteins
- python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion_protein   --wandb_project diffusion_protein --config_spec embed_time_in_nodes  --seed 0 --name test
+# protein
+ python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion_protein   --wandb_project diffusion_protein --config_spec embed_time_in_nodes  --seed 0 --name test --wandb
+ 
 ```
 The script assumes there is a tensor named `pos` and reserves the key `t` for time and `species` for molecule/atom/residual type.
 
@@ -134,10 +138,26 @@ config.data_config.path = 'dataest.hdf5'
 ## all files in (subfolders of) data/
 config.data_config.path = 'data/'
 
-## all .hdf5 files in data/, you may use any python regular expression.
+## all .hdf5 files in data/, the string after ':' is an arbitrary python regular expression.
 config.data_config.path = 'data/:.+\.hdf5'
+
+## For distributed training, equally distributed among processes
+config.data_config.path = ['split1.hdf5', 'split2.hdf5']
 ```
-You may set `data_config.reload=True` to reload the datasets in the folder every epoch.
+You may set `data_config.reload=True` to reload the dataset. This can be useful if the model is trained using active learning and the dataset changes from on epoch to another.
+`n_train` and `n_val` can be integers (number of data samples) or floats (fraction within the dataset).
+
+## Choosing Hyperparameters
+Two groups of hyperparamters are particularly important during training.
+
+The first group of hyper-parameters controls the rate of network parameter update, including `learning_rate`, `batch_size`, `grad_acc` and `loss_coeffs`. 
+A good pratice is:
+1. Set the batch size as large as possible as long as it fits in your GPU memory. If the largest possible batch size is still too small (e.g. less than 32), set `config.grad_acc` for gradient accumulation.
+2. Set the loss coeffs such that the total loss is about 1e1 to 1e3 at the begining. If the loss becomes too small during training, the gradient may become inaccurate due to float point round-off.
+3. Set the learning rate to a large value (e.g. 1e-2) at the begining and use automatic learning rate decay.
+
+The second group of hyper-parameters controls the rate of learning rate dacay, in another words, how long the model is trained. The groupd includes `lr_scheduler_patience`, `lr_scheduler_factor` and `epoch_subdivision`. The learning rate is multiplied by `lr_scheduler_factor` if the metrics have not improved in `(lr_scheduler_patience+1)/epoch_subdivision` epochs. You may fix `lr_scheduler_factor` to be 0.8 and change the `lr_scheduler_patience`. This might be the most important hyperparameter that needs manual tuning. The optimal value for `lr_scheduler_patience` depends on the learning task, the model and the size of the dataset.  You may need to try multiple values to find out a proper one.
+
 
 # Modules Provided
 

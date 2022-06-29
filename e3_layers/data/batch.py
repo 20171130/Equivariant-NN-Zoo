@@ -19,59 +19,58 @@ class Batch(Data):
         """
         super().__init__(attrs, **tensors)
 
-    def computeCumsums(self, force_recompute=True):
-        if "_n_nodes" in self.data and (force_recompute or not hasattr(self, 'node_cumsum')):
+    def computeCumsums(self):
+        if "_n_nodes" in self.data and (not hasattr(self, 'node_cumsum')):
             self.n_graphs = self.data["_n_nodes"].shape[0]
-            self.node_cumsum = [0]
-            for i in range(self.n_graphs):
-                self.node_cumsum.append(self.node_cumsum[-1] + self.data["_n_nodes"][i].item())
+            self.node_cumsum = torch.zeros((self.n_graphs+1,), dtype=torch.long)
+            self.node_cumsum[1:] = torch.cumsum(self.data['_n_nodes'], dim=0).squeeze(1)
             self.n_nodes = self.node_cumsum[-1]
-        if "_n_edges" in self.data and (force_recompute or not hasattr(self, 'edge_cumsum')):
+        if "_n_edges" in self.data and (not hasattr(self, 'edge_cumsum')):
             self.n_graphs = self.data["_n_edges"].shape[0]
-            self.edge_cumsum = [0]
-            for i in range(self.n_graphs):
-                self.edge_cumsum.append(self.edge_cumsum[-1] + self.data["_n_edges"][i].item())
+            self.edge_cumsum = torch.zeros((self.n_graphs+1,), dtype=torch.long)
+            self.edge_cumsum[1:] = torch.cumsum(self.data['_n_edges'], dim=0).squeeze(1)
             self.n_edges = self.edge_cumsum[-1]
 
     @classmethod
     def from_data_list(cls, lst, attrs={}):
         """
         This function can be used for creating datasets.
-        It works with list of dict of tensors or numpy arrays,
+        The first input is a list of Data, Batch, or dict of tensors or numpy arrays,
         which will be properly shaped into (cat_dim, irreps_and_channels).
         """
         data = {}
+        attrs["_n_nodes"] = ("graph", "1x0e")
+        attrs["_n_edges"] = ("graph", "1x0e")
         
         node_key = None
-        edge_key = None
         for key in lst[0].keys():
             if key in attrs:
                 if attrs[key][0] == "node":
                     node_key = key
-                elif attrs[key][0] == "edge":
-                    edge_key = key
-
-        if node_key:
-            attrs["_n_nodes"] = ("graph", "1x0e")
-            data["_n_nodes"] = torch.zeros((len(lst),), dtype=torch.long)
-            for i, item in enumerate(lst):
-                data["_n_nodes"][i] = item[node_key].shape[0]
-
-        if edge_key:
-            attrs["_n_edges"] = ("graph", "1x0e")
-            data["_n_edges"] = torch.zeros((len(lst),), dtype=torch.long)
-            for i, item in enumerate(lst):
-                data["_n_edges"][i] = item[edge_key].shape[0]
-                
+        
+        # computes the amount of graph elements
+        for i, item in enumerate(lst):
+            if not '_n_nodes' in item:
+                assert node_key is not None, 'Unable to infer the amount of nodes.'
+                item["_n_nodes"] = torch.ones((1, 1), dtype=torch.long)*item[node_key].shape[0]
+            if not '_n_edges' in item and 'edge_index' in item:
+                item["_n_edges"] = torch.zeros((1, 1), dtype=torch.long)*item['edge_index'].shape[1]
+        data['_n_nodes'] = torch.cat([item['_n_nodes'] for item in lst])
+        if '_n_edges' in lst[0]:
+            data['_n_edges'] = torch.cat([item['_n_edges'] for item in lst])
+        
         for key in lst[0].keys():
-            if key == "edge_index" or key == "face":
+            if key == "edge_index":
                 to_cat = []
-                cnt = 0
+                graph_cnt = 0
+                node_cnt = 0
                 for i, item in enumerate(lst):
                     if not isinstance(item[key], torch.Tensor):
                         item[key] = torch.Tensor(item[key])
-                    to_cat.append(item[key] + cnt)
-                    cnt += data['_n_nodes'][i]
+                    to_cat.append(item[key] + node_cnt)
+                    n_graphs = item['_n_nodes'].shape[0]
+                    node_cnt += data['_n_nodes'][graph_cnt: graph_cnt+n_graphs].sum()
+                    graph_cnt += n_graphs
                 data[key] = torch.cat(to_cat, dim=-1)
             else:
                 items = [
@@ -96,8 +95,8 @@ class Batch(Data):
         return cls(attrs, **data)
 
     def get(self, idx):
+        self.computeCumsums()
         dic = {}
-        
         for key, value in self.data.items():
             if key == "edge_index":
                 start, end = self.edge_cumsum[idx], self.edge_cumsum[idx + 1]
@@ -179,14 +178,10 @@ class Batch(Data):
             )
         else:
             super().__setitem__(key, item)
-        if key == '_n_nodes' or key == '_n_edges':
-            self.computeCumsums()
 
     def update(self, other):
         for key, value in other.items():
             self[key] = value
-        if '_n_nodes' in other or '_n_edges' in other:
-            self.computeCumsums()
 
     def __len__(self):
         return self.n_graphs

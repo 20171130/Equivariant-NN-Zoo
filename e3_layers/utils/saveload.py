@@ -13,7 +13,7 @@ import ase
 # accumulate writes to group for renaming
 _MOVE_SET = contextvars.ContextVar("_move_set", default=None)
 
-def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp.gro'):
+def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp'):
     """
     saves a molecule in gromacs
     """
@@ -31,18 +31,42 @@ def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp.gro'):
         line += f'{0.:>8.4f}{0.:>8.4f}{0.:>8.4f}'
         lines.append(line)
  #   lines.append('0 0 0')
-    with open(os.path.join(workdir, filename), 'w') as f:
+    filename = os.path.join(workdir, filename)+'.gro'
+    with open(filename, 'w') as f:
         f.write('\n'.join(lines))
+    return filename
       
-def saveProtein(batch, path, idx=0):
-    aa_names = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
-         'ILE': 'I', 'PRO': 'P', 'THR': 'T', 'PHE': 'F', 'ASN': 'N', 
-         'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W', 
-         'ALA': 'A', 'VAL':'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'}
-    aa_ids = {i:key for i, key in enumerate(aa_names.keys())}
+def saveProtein(batch, workdir, idx=0, filename='tmp'):
+    codification = { "UNK" : 'X',
+                     "ALA" : 'A',
+                     "CYS" : 'C',
+                     "ASP" : 'D',
+                     "GLU" : 'E',
+                     "PHE" : 'F',
+                     "GLY" : 'G',
+                     "HIS" : 'H',
+                     "ILE" : 'I',
+                     "LYS" : 'K',
+                     "LEU" : 'L',
+                     "MET" : 'M',
+                     "ASN" : 'N',
+                     "PYL" : 'O',
+                     "PRO" : 'P',
+                     "GLN" : 'Q',
+                     "ARG" : 'R',
+                     "SER" : 'S',
+                     "THR" : 'T',
+                     "SEC" : 'U',
+                     "VAL" : 'V',
+                     "TRP" : 'W',
+                     "TYR" : 'Y' }
+    aa_ids = {i:key for i, key in enumerate(codification.keys())}
     def id2name(x):
-        return aa_ids[x-1]
-    with open(path, "w") as f:
+        if x == 0:
+            return 'GLY' # UNK is not displayed properly
+        return aa_ids[x]
+    filename = os.path.join(workdir, filename)+'.pdb'
+    with open(filename, "w") as f:
         for i in range(batch['_n_nodes'][idx]):
             j = [0]* 12
             j[0] = 'ATOM'
@@ -78,6 +102,7 @@ def saveProtein(batch, path, idx=0):
             j[11]=j[11].rjust(12)#elname    
             f.write("%s%s %s %s %s%s    %s%s%s%s%s%s\n"%(j[0],j[1],j[2],j[3],j[4],j[5],j[6],j[7],j[8],j[9],j[10],j[11]))
         f.write('TER\nEND\n')
+    return filename
 
 def _delete_files_if_exist(paths):
     # clean up
