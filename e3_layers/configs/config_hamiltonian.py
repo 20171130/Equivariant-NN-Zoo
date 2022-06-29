@@ -130,7 +130,6 @@ def get_config(spec=None):
     data.train_val_split = "random"
     data.shuffle = True
     data.path = "h2o.hdf5"
-    data.key_map = {"species": "atom_types"}
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
 

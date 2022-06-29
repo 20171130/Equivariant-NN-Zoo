@@ -47,7 +47,7 @@ def get_config(spec=None):
     data.shuffle = True
     data.path = "protein_topo.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.key_map = {'species':'atom_types', 'coord': 'pos', 'bond_orders': 'bond_type'}
+    data.key_map = {'coord': 'pos', 'bond_orders': 'bond_type'}
 
     features = "+".join(
         [f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)]

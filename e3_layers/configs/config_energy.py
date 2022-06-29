@@ -44,7 +44,7 @@ def get_config(spec=None):
     data.shuffle = True
     data.path = ".:.*/qm9.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.key_map = {"Z": "atom_types", "R": "pos", "U": "total_energy"}
+    data.key_map = {"Z": "species", "R": "pos", "U": "total_energy"}
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
 
     "+".join([f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)])

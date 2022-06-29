@@ -4,7 +4,7 @@ from ml_collections.config_dict import ConfigDict
 import ase
 from .layer_configs import featureModel, addEdgeEmbedding, addForceOutput, addEnergyOutput
 from ..nn import PointwiseLinear, RadialBasisEncoding, GraphFeatureEmbedding
-from ..utils import insertAfter, saveMol
+from ..utils import insertAfter, saveProtein
 
 
 def get_config(spec=''):
@@ -33,7 +33,7 @@ def get_config(spec=''):
     config.lr_scheduler_patience = 15 # number of eval steps
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.0
-    config.saveMol = saveMol
+    config.saveMol = saveProtein
 
     model.n_dim = 32
     model.l_max = 2
@@ -41,18 +41,23 @@ def get_config(spec=''):
     model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
-    num_types = 18
+    num_types = 21
 
-    data.n_train = 120000
-    data.n_val = 10831
-    data.std = 1.4 # such that the variance of pos is roughly 3
+    data.n_train = 50000
+    data.n_val = 3009
+    data.std = 17.6163 
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = "qm9_edge.hdf5"
+    data.path = "tmp.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
+    data.preprocess = []
     if not 'gcn' in spec:
         data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
-    data.key_map = {"Z": "species", "R": "pos", "U": "total_energy", "edge_attr": "bond_type"}
+    if 'sidechain_agnostic' in spec:
+        def func(batch):
+            batch['atom_types'] = batch['atom_types']*0
+        data.preprocess.append(func)
+    data.key_map = {"aa_type": "species", "R": "pos", "edge_attr": "bond_type"}
     
     if spec and 'profiling' in spec:
         data.n_train = 2048
@@ -73,7 +78,7 @@ def get_config(spec=''):
         num_layers=model.num_layers,
         r_max=model.r_max,
     )
-    layer_configs = addEdgeEmbedding(layer_configs, num_bond_types=4)
+    layer_configs = addEdgeEmbedding(layer_configs, num_bond_types=3)
 
     if 'embed_time_in_nodes' in spec:
         time_encoding = ('time_encoding', {

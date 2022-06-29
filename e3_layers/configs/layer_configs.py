@@ -41,7 +41,7 @@ def featureModel(
     layers["one_hot"] = {
         "module": OneHotEncoding,
         "irreps_out": (f"{num_types}x0e", "one_hot"),
-        "irreps_in": ("1x0e", "atom_types"),
+        "irreps_in": ("1x0e", 'species'),
     }
     layers["spharm_edges"] = {
         "module": SphericalEncoding,

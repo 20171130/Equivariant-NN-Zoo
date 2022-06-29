@@ -39,6 +39,7 @@ class CondensedDataset(Batch):
         
     @staticmethod
     def load(path):
+        logging.info(f'Loading {path}')
         def loadFile(file):
             data = {}
             attrs = {}
@@ -79,6 +80,7 @@ class CondensedDataset(Batch):
             raise FileNotFoundError(path)
         if len(data) == 0:
             logging.warning('No dataset file is found.')
+        logging.info(f'Loaded {path}')
         return data, attrs
             
     

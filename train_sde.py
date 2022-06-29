@@ -4,13 +4,12 @@ import os
 import time
 import logging
 from tqdm import tqdm, trange
+from pathlib import Path
 
-import numpy as np
 import tensorflow as tf
+import numpy as np
 import torch
 import wandb
-from torchvision.utils import make_grid, save_image
-
 # Keep the import below for registering all model definitions
 from models import ddpm, ncsnv2, ncsnpp
 import sde_utils as losses
@@ -26,7 +25,7 @@ from utils import save_checkpoint, restore_checkpoint
 from absl import flags, app
 from ml_collections.config_flags import config_flags
 
-from e3_layers.utils import build, saveMol, pruneArgs
+from e3_layers.utils import build, pruneArgs
 from e3_layers import configs
 from e3_layers.data import CondensedDataset, DataLoader, Batch, computeEdgeVector
 
@@ -42,14 +41,8 @@ def train(sde_config, e3_config):
     e3_config: the config for e3_layers https://github.com/20171130/Equivariant-NN-Zoo
   """
   workdir = FLAGS.workdir
-
-  # Create directories for experimental logs
-  sample_dir = os.path.join(workdir, "samples")
-  tf.io.gfile.makedirs(sample_dir)
-
-  tb_dir = os.path.join(workdir, "tensorboard")
-  tf.io.gfile.makedirs(tb_dir)
-
+  saveMol = e3_config.saveMol
+  
   # Initialize model.
   score_model = build(e3_config.model_config).to(sde_config.device)
   ema = ExponentialMovingAverage(score_model.parameters(), decay=sde_config.model.ema_rate)
@@ -66,8 +59,8 @@ def train(sde_config, e3_config):
   checkpoint_dir = os.path.join(workdir, "checkpoints")
   # Intermediate checkpoints to resume training after pre-emption in cloud environments
   checkpoint_meta_dir = os.path.join(workdir, "checkpoints-meta", "checkpoint.pth")
-  tf.io.gfile.makedirs(checkpoint_dir)
-  tf.io.gfile.makedirs(os.path.dirname(checkpoint_meta_dir))
+  Path(checkpoint_dir).mkdir(exist_ok=True)
+  Path(os.path.dirname(checkpoint_meta_dir)).mkdir(exist_ok=True)
   # Resume training when intermediate checkpoints are detected
   state = restore_checkpoint(checkpoint_meta_dir, state, sde_config.device)
   initial_step = int(state['step'])
@@ -163,7 +156,7 @@ def train(sde_config, e3_config):
         ema.copy_to(score_model.parameters())
         ema.restore(score_model.parameters())
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
-        tf.io.gfile.makedirs(this_sample_dir)
+        Path(this_sample_dir).mkdir(exist_ok=True)
         
         saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth.gro')
         wandb.log({'ground_truth': wandb.Molecule(os.path.join(FLAGS.workdir, 'ground_truth.gro'))})
@@ -271,10 +264,11 @@ def main(argv):
       print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
     except RuntimeError as e:
       raise e
+  
       
   FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
   # Create the working directory
-  tf.io.gfile.makedirs(FLAGS.workdir)
+  Path(FLAGS.workdir).mkdir(exist_ok=True)
   # Set logger so that it outputs to both console and file
   # Make logging work for both disk and Google Cloud Storage
   gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
