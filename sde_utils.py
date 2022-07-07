@@ -111,10 +111,21 @@ def getScaler(scale):
     pos = batch['pos']
     device = pos.device
     node_segment = batch.nodeSegment().to(device)
+    n_nodes = batch['_n_nodes'].view(-1, 1)
+    if 'pos_mask' in batch:
+      pos_mask = (batch['pos_mask']==0).view(-1)
+      node_segment = node_segment[pos_mask]
+      n_nodes = torch.bincount(node_segment).view(-1, 1)
+      pos_mask = torch.cat([pos_mask.view(-1, 1)]*3, dim=1)
+      pos = pos[pos_mask].view(-1, 3)
+
     center = scatter(pos, node_segment, dim=0, reduce='sum')
-    center = center/batch['_n_nodes']
+    center = center/n_nodes
     pos = pos - center[node_segment]
-    batch['pos'] = pos*scale
+    if 'pos_mask' in batch:
+      batch['pos'][pos_mask] = (pos*scale).view(-1)
+    else:
+      batch['pos'] = pos*scale
     return batch
   return scaler
 
@@ -242,7 +253,7 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clid_norm)
       if not state['step']==0 and state['step']%grad_acc==0:
         optimizer.step()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
       state['step'] += 1
       state['ema'].update(model.parameters())
     else:

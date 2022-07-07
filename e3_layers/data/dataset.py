@@ -42,7 +42,7 @@ class CondensedDataset(Batch):
     @staticmethod
     def load(path):
         def loadFile(file):
-            logging.info(f'Loading {path}')
+            logging.info(f'Loading {file}')
             data = {}
             attrs = {}
             with h5py.File(file, "r") as file:
@@ -55,7 +55,7 @@ class CondensedDataset(Batch):
                     data[key] = item
                 for key in file.attrs.keys():
                     attrs[key] = file.attrs[key]
-            logging.info(f'Loaded {path}')
+                logging.info(f'Loaded {file}')
             return data, attrs
           
         if isinstance(path, str):
@@ -66,9 +66,8 @@ class CondensedDataset(Batch):
             else:
                 path = path[0]
                 regexp = None
-            if os.path.isfile(path):
-                data, attrs = loadFile(path)
-            elif os.path.isdir(path):
+
+            if os.path.isdir(path):
                 data = []
                 attrs = {}
                 for root, dirs, files in os.walk(path):
@@ -79,6 +78,8 @@ class CondensedDataset(Batch):
                         _data, _attrs = loadFile(file)
                         data.append(_data)
                         attrs.update(_attrs)
+            else:
+                data, attrs = loadFile(path)
         else: # is a list
             data = []
             attrs = {}

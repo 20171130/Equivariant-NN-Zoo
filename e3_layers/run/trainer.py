@@ -442,9 +442,9 @@ class Trainer:
                     my_schedule=torch.profiler.schedule(
                             wait=1,
                             warmup=1,
-                            active=2)
+                            active=3)
                     cm = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                             record_shapes=True, with_stack=True,
+                             record_shapes=True, with_stack=True, profile_memory=True,
                              schedule=my_schedule)
                 else:
                     cm = contextlib.nullcontext()
@@ -477,6 +477,7 @@ class Trainer:
                         if (self.ibatch + 1) % (
                             len(dataset) // self.epoch_subdivision
                         ) == 0:
+                          
                             break
                         if category == 'training' and FLAGS.profiling:
                             cm.step()
@@ -484,7 +485,10 @@ class Trainer:
                     self.metrics_dict[category] = self.metrics.current_result()
                     self.loss_dict[category] = self.loss_stat.current_result()
                 if category == 'training' and FLAGS.profiling:
-                    print(cm.key_averages(group_by_stack_n=5).table(sort_by='self_cpu_time_total', row_limit=5))
+                    with open(os.path.join(FLAGS.workdir, "profiling.txt"), 'w') as f:
+                        f.write(cm.key_averages(group_by_stack_n=5).table(sort_by='self_cpu_time_total', row_limit=10))
+                        f.write(cm.key_averages(group_by_stack_n=5).table(sort_by='self_cuda_time_total', row_limit=10))
+                        f.write(cm.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=10))
                     cm.export_chrome_trace(os.path.join(FLAGS.workdir, "profiling.json"))
                     # currently this causes segfault https://github.com/pytorch/pytorch/issues/69443
 
@@ -717,7 +721,11 @@ class Trainer:
 
     def save_model(self, path, blocking: bool = True):
         with atomic_write(path, blocking=blocking, binary=True) as write_to:
-            torch.save(self.model.state_dict(), write_to)
+            if isinstance(self.model, DDP):
+                state_dict = self.model.module.state_dict()
+            else:
+                state_dict = self.model.state_dict()
+            torch.save(state_dict, write_to)
 
     def save(self, filename: Optional[str] = None, format=None, blocking: bool = True):
         """save the file as filename

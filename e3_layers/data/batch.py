@@ -19,18 +19,16 @@ class Batch(Data):
         """
         super().__init__(attrs, **tensors)
 
-    def computeCumsums(self, force_recompute=True):
-        if "_n_nodes" in self.data and (force_recompute or not hasattr(self, 'node_cumsum')):
+    def computeCumsums(self):
+        if "_n_nodes" in self.data and (not hasattr(self, 'node_cumsum')):
             self.n_graphs = self.data["_n_nodes"].shape[0]
-            self.node_cumsum = [0]
-            for i in range(self.n_graphs):
-                self.node_cumsum.append(self.node_cumsum[-1] + self.data["_n_nodes"][i].item())
+            self.node_cumsum = torch.zeros((self.n_graphs+1,), dtype=torch.long)
+            self.node_cumsum[1:] = torch.cumsum(self.data['_n_nodes'], dim=0).squeeze(1)
             self.n_nodes = self.node_cumsum[-1]
-        if "_n_edges" in self.data and (force_recompute or not hasattr(self, 'edge_cumsum')):
+        if "_n_edges" in self.data and (not hasattr(self, 'edge_cumsum')):
             self.n_graphs = self.data["_n_edges"].shape[0]
-            self.edge_cumsum = [0]
-            for i in range(self.n_graphs):
-                self.edge_cumsum.append(self.edge_cumsum[-1] + self.data["_n_edges"][i].item())
+            self.edge_cumsum = torch.zeros((self.n_graphs+1,), dtype=torch.long)
+            self.edge_cumsum[1:] = torch.cumsum(self.data['_n_edges'], dim=0).squeeze(1)
             self.n_edges = self.edge_cumsum[-1]
 
     @classmethod
@@ -97,8 +95,8 @@ class Batch(Data):
         return cls(attrs, **data)
 
     def get(self, idx):
+        self.computeCumsums()
         dic = {}
-        
         for key, value in self.data.items():
             if key == "edge_index":
                 start, end = self.edge_cumsum[idx], self.edge_cumsum[idx + 1]
@@ -180,14 +178,10 @@ class Batch(Data):
             )
         else:
             super().__setitem__(key, item)
-        if key == '_n_nodes' or key == '_n_edges':
-            self.computeCumsums()
 
     def update(self, other):
         for key, value in other.items():
             self[key] = value
-        if '_n_nodes' in other or '_n_edges' in other:
-            self.computeCumsums()
 
     def __len__(self):
         return self.n_graphs

@@ -121,7 +121,6 @@ class FactorizedConvolution(Module, torch.nn.Module):
         data.update(self.outputKeyMap({"output_features": x}))
         return data
 
-
 class MessagePassing(Module, torch.nn.Module):
     def __init__(
         self,
@@ -235,7 +234,6 @@ class MessagePassing(Module, torch.nn.Module):
     #    tmp = self.irreps_out['output_features']
     #   self.linear_tp = Linear(tmp, tmp)
     #  self.tp = TensorProductExpansion(tmp, tmp, tmp, 'uuu', internal_weight=True)
-
     def forward(self, data):
         input = self.inputKeyMap(data)
         # save old features for resnet

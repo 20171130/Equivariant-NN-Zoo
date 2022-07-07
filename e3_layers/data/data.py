@@ -47,7 +47,7 @@ class Data(object):
         Both of them are scalars defined per graph, so the attrs for these keys are ('graph', '1x0e').
         """
         self.attrs = attrs
-        self.data = tensors
+        self.data = {}
         for key, value in tensors.items():
             self[key] = value
 

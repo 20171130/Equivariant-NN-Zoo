@@ -24,9 +24,9 @@ def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp'):
     lines.append('title')
     lines.append(f'{batch["_n_nodes"][idx].item()}')
     for i in range(batch['_n_nodes'][idx]):
-        species = type_names[batch['species'][batch.node_cumsum[idx]+i]]
+        species = type_names[batch[idx]['species'][i]]
         line = f"{1:>5}{f'none':>5}{species:>5}{i:>5}"
-        x, y, z = batch['pos'][batch.node_cumsum[idx]+i]*0.1 # A to nm
+        x, y, z = batch[idx]['pos'][i]*0.1 # A to nm
         line += f'{x:>8.3f}{y:>8.3f}{z:>8.3f}'
         line += f'{0.:>8.4f}{0.:>8.4f}{0.:>8.4f}'
         lines.append(line)
@@ -62,7 +62,7 @@ def saveProtein(batch, workdir, idx=0, filename='tmp'):
                      "TYR" : 'Y' }
     aa_ids = {i:key for i, key in enumerate(codification.keys())}
     def id2name(x):
-        if x == 0:
+        if not x in list(range(1, 23)):
             return 'GLY' # UNK is not displayed properly
         return aa_ids[x]
     filename = os.path.join(workdir, filename)+'.pdb'
@@ -78,7 +78,7 @@ def saveProtein(batch, workdir, idx=0, filename='tmp'):
             j[2] = 'CA'
             j[2] = j[2].center(4)#atomname$#4s
             
-            j[3] = id2name(batch['species'][batch.node_cumsum[idx]+i].item())
+            j[3] = id2name(batch[idx]['species'][i].item())
             j[3] = j[3].ljust(3)#resname#1s
             
             j[4] = 'A'
@@ -87,7 +87,7 @@ def saveProtein(batch, workdir, idx=0, filename='tmp'):
             j[5] = f'{i+1}'
             j[5] = j[5].rjust(4) #resnum
             
-            x, y, z = batch['pos'][batch.node_cumsum[idx]+i]
+            x, y, z = batch[idx]['pos'][i]
             j[6] = str('%8.3f' % (float(x))).rjust(8) #x
             j[7] = str('%8.3f' % (float(y))).rjust(8)#y
             j[8] = str('%8.3f' % (float(z))).rjust(8) #z\

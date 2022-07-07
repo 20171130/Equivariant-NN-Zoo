@@ -32,9 +32,9 @@ def get_config(spec=''):
   #  config.metrics_components = {"dipole": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
-    config.lr_scheduler_patience = 0
+    config.lr_scheduler_patience = 1
     config.lr_scheduler_factor = 0.8
-    config.grad_clid_norm = 1.0
+    config.grad_clid_norm = None
     config.saveMol = saveProtein
     
     model.n_dim = 32
@@ -43,7 +43,7 @@ def get_config(spec=''):
     model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
-    num_types = 23
+    num_types = 23*2
 
     data.n_train = 0.9
     data.n_val = 0.1
@@ -53,11 +53,8 @@ def get_config(spec=''):
     data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(8)]
     data.apth = '/mnt/vepfs/hb/protein_small/0'
     data.preprocess = []
-    def float2long(x):
-        x['edge_index'] = x['edge_index'].long()
-        return x
     if not 'gcn' in spec:
-        data.preprocess = [float2long, partial(computeEdgeIndex, r_max=9999)]
+        data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
     if 'sidechain_agnostic' in spec:
         def maskSpecies(batch):
             batch['species'] = batch['species']*0
@@ -65,7 +62,8 @@ def get_config(spec=''):
         data.preprocess.append(maskSpecies)
         
     def posMask(batch):
-        batch['pos'] = batch['pos'] + batch['pos_mask']*torch.randn(batch['pos'].shape)
+        batch['pos'] = batch['pos'] + batch['pos_mask']*torch.randn(batch['pos'].shape)*data.std
+        batch['species'] = batch['species'] + batch['pos_mask']*batch['species'] # mark as masked
         return batch
     data.preprocess.append(posMask)
     

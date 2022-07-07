@@ -13,8 +13,8 @@ def featureModel(
     edge_radial,
     num_types,
     num_layers,
-    node_attrs,
     r_max,
+    node_attrs=None,
     edge_spherical=None,
     avg_num_neighbors=10
 ):
@@ -41,7 +41,7 @@ def featureModel(
     layers["edge_vector"] = computeEdgeVector
     layers["one_hot"] = {
         "module": OneHotEncoding,
-        "irreps_out": (f"{num_types}x0e", "one_hot"),
+        "irreps_out": (f"{num_types}x0e", "node_attrs"),
         "irreps_in": ("1x0e", 'species'),
     }
     layers["spharm_edges"] = {
@@ -59,14 +59,17 @@ def featureModel(
     }
     layers["chemical_embedding"] = {
         "module": PointwiseLinear,
-        "irreps_in": (f"{num_types}x0e", "one_hot"),
+        "irreps_in": (f"{num_types}x0e", "node_attrs"),
         "irreps_out": (f"{n_dim}x0e", "node_features"),
     }
-    layers["node_attrs"] = {
-        "module": PointwiseLinear,
-        "irreps_in": (f"{num_types}x0e", "one_hot"),
-        "irreps_out": (node_attrs, "node_attrs"),
-    }
+    if not node_attrs is None:
+        layers["node_attrs"] = {
+            "module": PointwiseLinear,
+            "irreps_in": (f"{num_types}x0e", "node_attrs"),
+            "irreps_out": (node_attrs, "node_attrs"),
+        }
+    else:
+        node_attrs = f'{num_types}x0e'
     irreps = {
         "node_attrs": node_attrs,
         "input_features": [node_features, "node_features"],

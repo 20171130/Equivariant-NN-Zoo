@@ -14,9 +14,9 @@ def get_config(spec=None):
     config.data_config = data
     config.model_config = model
 
-    config.epoch_subdivision = 10
+    config.epoch_subdivision = 5
     config.learning_rate = 1e-2
-    config.batch_size = 128
+    config.batch_size = 64
 
     config.use_ema = True
     config.ema_decay = 0.99
@@ -34,11 +34,11 @@ def get_config(spec=None):
     config.lr_scheduler_patience = 1
     config.lr_scheduler_factor = 0.8
 
-    model.n_dim = 32
+    model.n_dim = 64
     model.l_max = 2
-    model.r_max = 4.0
-    model.num_layers = 4
-    model.node_attrs = "8x0e"
+    model.r_max = 8.0
+    model.num_layers = 5
+    model.node_attrs = "16x0e"
     num_types = 20
 
     data.n_train = 2560000
