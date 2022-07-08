@@ -14,7 +14,7 @@ import wandb
 from e3_layers.utils import build
 from e3_layers import configs
 from e3_layers.data import CondensedDataset
-
+import torch
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("config", None, "The name of the config.")
@@ -47,6 +47,7 @@ flags.mark_flags_as_required(["config"])
 
 
 def run(rank, config):
+    torch.jit.set_fusion_strategy([('STATIC', 2), ('DYNAMIC', 2)])
     FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
     if rank == 0:
         if not FLAGS.resume_from and os.path.isdir(FLAGS.workdir):

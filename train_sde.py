@@ -65,6 +65,7 @@ def train(e3_config, FLAGS):
   workdir = FLAGS.workdir
   saveMol = e3_config.saveMol
   device = torch.device(dist.get_rank())
+  torch.jit.set_fusion_strategy([('STATIC', 2), ('DYNAMIC', 2)])
   
   if dist.get_rank() == 0:
     # Create checkpoints directory

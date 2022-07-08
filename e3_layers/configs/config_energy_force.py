@@ -16,7 +16,7 @@ def get_config(spec=None):
 
     config.epoch_subdivision = 5
     config.learning_rate = 1e-2
-    config.batch_size = 64
+    config.batch_size = 128
 
     config.use_ema = True
     config.ema_decay = 0.99
@@ -36,7 +36,7 @@ def get_config(spec=None):
 
     model.n_dim = 64
     model.l_max = 2
-    model.r_max = 8.0
+    model.r_max = 4.0
     model.num_layers = 5
     model.node_attrs = "16x0e"
     num_types = 20

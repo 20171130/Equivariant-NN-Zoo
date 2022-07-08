@@ -38,7 +38,7 @@ def get_config(spec=None):
     model.node_attrs = "8x0e"
     num_types = 10
 
-    data.n_train = 120000
+    data.n_train = 1200#00
     data.n_val = 10831
     data.train_val_split = "random"
     data.shuffle = True
