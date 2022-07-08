@@ -35,7 +35,7 @@ class CondensedDataset(Batch):
             
         if type_names == None:
             type_names = ase.atom.atomic_numbers.keys()
-        self.type_names = type_names
+        self.type_names = list(type_names)
         self.preprocess = preprocess
         self.kwargs = kwargs
         

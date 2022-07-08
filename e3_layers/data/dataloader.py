@@ -9,8 +9,6 @@ from .data import Data
 from .dataset import CondensedDataset
 
 from absl import flags
-FLAGS = flags.FLAGS
-
 
 class Collater(object):
     def __init__(self, attrs={}):
@@ -29,7 +27,6 @@ class Collater(object):
         """Collate a list of data"""
         return self.collate(batch)
 
-
 class DataLoader(torch.utils.data.DataLoader):
     def __init__(
         self,
@@ -47,12 +44,13 @@ class DataLoader(torch.utils.data.DataLoader):
         )
 
 def getDataIters(config):
+  FLAGS = flags.FLAGS
   data_config = config.data_config
   
   # splits the dataset among processes
   rank = dist.get_rank()
   if isinstance(data_config.path, tuple) or isinstance(data_config.path, list):
-      gcd = math.gcd(rank, len(data_config.path))
+      gcd = math.gcd(FLAGS.world_size, len(data_config.path))
       start = (rank%gcd) * (len(data_config.path)//gcd)
       end = (rank%gcd + 1)* (len(data_config.path)//gcd)
       data_config.path = data_config.path[start: end]
@@ -99,12 +97,12 @@ def getDataIters(config):
       drop_last = True
   )
   train_dl = DataLoader(
-      dataset=dataset,
+      dataset=train_ds,
       shuffle=True,
       **dl_kwargs,
   )
   eval_dl = DataLoader(
-      dataset=dataset,
+      dataset=eval_ds,
       shuffle=False, 
       **dl_kwargs,
   )

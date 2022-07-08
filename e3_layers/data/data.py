@@ -1,33 +1,13 @@
-"""AtomicData: neighbor graphs in (periodic) real space.
-
-Authors: Albert Musaelian
-Modified by Hangrui Bi
-"""
-
 from typing import Tuple, Union
-
 
 import torch
 import e3nn.o3
-
-_TORCH_INTEGER_DTYPES = (torch.int, torch.long)
-
-# A type representing ASE-style periodic boundary condtions, which can be partial (the tuple case)
-PBC = Union[bool, Tuple[bool, bool, bool]]
 
 import re
 import copy
 
 import torch
 import h5py
-
-__num_nodes_warn_msg__ = (
-    "The number of nodes in your data object can only be inferred by its {} "
-    "indices, and hence may result in unexpected batch-wise behavior, e.g., "
-    "in case there exists isolated nodes. Please consider explicitly setting "
-    "the number of nodes for this data object by assigning it to "
-    "data.num_nodes."
-)
 
 
 class Data(object):

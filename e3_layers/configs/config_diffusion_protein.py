@@ -7,6 +7,13 @@ from ..nn import PointwiseLinear, RadialBasisEncoding, GraphFeatureEmbedding
 from ..utils import insertAfter, saveProtein
 import torch
 
+def posMask(batch):
+    batch['pos'] = batch['pos'] + batch['pos_mask']*torch.randn(batch['pos'].shape) # a cluster at the center
+    batch['species'] = batch['species'] + batch['pos_mask']*batch['species'] # mark as masked
+    return batch
+def maskSpecies(batch):
+    batch['species'] = batch['species']*0
+    return batch
 
 def get_config(spec=''):
     config = ConfigDict()
@@ -15,7 +22,7 @@ def get_config(spec=''):
     config.model_config = model
 
     config.learning_rate = 1e-2
-    config.batch_size = 1
+    config.batch_size = 2
     config.grad_acc = 128
     
     config.use_ema = True
@@ -50,21 +57,14 @@ def get_config(spec=''):
     data.std = 25.83
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(8)]
-    data.apth = '/mnt/vepfs/hb/protein_small/0'
+    #data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(8)]
+    data.path = '/mnt/vepfs/hb/protein_small/0'
     data.preprocess = []
     if not 'gcn' in spec:
         data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
     if 'sidechain_agnostic' in spec:
-        def maskSpecies(batch):
-            batch['species'] = batch['species']*0
-            return batch
         data.preprocess.append(maskSpecies)
         
-    def posMask(batch):
-        batch['pos'] = batch['pos'] + batch['pos_mask']*torch.randn(batch['pos'].shape)*data.std
-        batch['species'] = batch['species'] + batch['pos_mask']*batch['species'] # mark as masked
-        return batch
     data.preprocess.append(posMask)
     
     data.key_map = {"aa_type": "species", "R": "pos", "edge_attr": "bond_type"}

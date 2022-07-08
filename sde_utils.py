@@ -11,7 +11,6 @@ import functools
 from tqdm import tqdm, trange
 from sampling import get_predictor, get_corrector
 
-
 from e3_layers.utils import saveMol
 import wandb
 
@@ -247,6 +246,7 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
     model = state['model']
     if train:
       optimizer = state['optimizer']
+
       loss = loss_fn(model, batch)
       loss.backward()
       if not grad_clid_norm is None:

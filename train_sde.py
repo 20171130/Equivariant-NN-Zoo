@@ -1,6 +1,7 @@
 import gc
 import io
 import os
+import sys
 import time
 import logging
 from tqdm import tqdm, trange
@@ -30,15 +31,37 @@ from e3_layers.data import Batch, computeEdgeVector, getDataIters
 
 import pdb
 
-FLAGS = flags.FLAGS
+config_flags.DEFINE_config_file(
+  "sde_config", None, "Training sde_configuration.", lock_config=True)
+flags.DEFINE_string("workdir", 'results', "Work directory.")
 
-def train(e3_config, sde_config):
+flags.DEFINE_string("e3_config", None, "The name of the config.")
+flags.DEFINE_string("config_spec", '', "Config specification.")
+flags.DEFINE_string("name", "default", "Name of the experiment.")
+flags.DEFINE_integer("seed", 0, "The RNG seed.")
+flags.DEFINE_integer(
+    "dataloader_num_workers", 4, "Number of workers per training process."
+)
+flags.DEFINE_boolean("wandb", False, "If logging with wandb.")
+flags.DEFINE_string("wandb_project", None, "The name of the wandb project.")
+flags.DEFINE_string("verbose", "INFO", "Logging verbosity.")
+flags.DEFINE_integer("log_period", 100, "Number of training steps.")
+flags.DEFINE_integer("eval_period", 20, "Number of training steps.")
+flags.DEFINE_integer("save_period", 2000, "Number of training steps.")
+
+flags.DEFINE_integer("world_size", 1, "Number of processes.")
+flags.DEFINE_string("master_addr", "127.0.0.1", "The address to use.")
+flags.DEFINE_string("master_port", "10000", "The port to use.")
+flags.mark_flags_as_required(["sde_config", "e3_config"])
+
+def train(e3_config, FLAGS):
   """Runs the training pipeline.
 
   Args:
     sde_config: the config for sde_score_pytorch https://github.com/yang-song/score_sde_pytorch
     e3_config: the config for e3_layers https://github.com/20171130/Equivariant-NN-Zoo
   """
+  sde_config = FLAGS.sde_config
   workdir = FLAGS.workdir
   saveMol = e3_config.saveMol
   device = torch.device(dist.get_rank())
@@ -114,8 +137,10 @@ def train(e3_config, sde_config):
   # In case there are multiple hosts (e.g., TPU pods), only log to host 0
   logging.info("Starting training loop at step %d." % (initial_step,))
     
-  pbar = trange(initial_step, num_train_steps + 1)
-  pbar.set_description(f'{FLAGS.name}')
+  pbar = range(initial_step, num_train_steps + 1)
+  if dist.get_rank() == 0:
+    pbar = tqdm(pbar)
+    pbar.set_description(f'{FLAGS.name}')
   
   loss_lst = []
   eval_loss_lst = []
@@ -169,7 +194,7 @@ def train(e3_config, sde_config):
         filenmae = saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth')
         wandb.log({'ground_truth': wandb.Molecule(filenmae)})
 
-        n_samples = 5
+        n_samples = 1
         lst = [batch[0] for i in range(n_samples)]
         batch = Batch.from_data_list(lst, batch.attrs)
         samples_batch, n = sampling_fn(score_model, batch)
@@ -190,44 +215,35 @@ def train(e3_config, sde_config):
         filename = f'{step}_{sum_loss/n_samples}'
         filenmae = saveMol(samples_batch, idx=i, workdir=FLAGS.workdir, filename=filename)
         wandb.log({'sample': wandb.Molecule(filenmae)})
-        
-FLAGS = flags.FLAGS
-
-config_flags.DEFINE_config_file(
-  "sde_config", None, "Training sde_configuration.", lock_config=True)
-flags.DEFINE_string("workdir", 'results', "Work directory.")
-
-flags.DEFINE_string("e3_config", None, "The name of the config.")
-flags.DEFINE_string("config_spec", '', "Config specification.")
-flags.DEFINE_string("name", "default", "Name of the experiment.")
-flags.DEFINE_integer("seed", 0, "The RNG seed.")
-flags.DEFINE_integer(
-    "dataloader_num_workers", 4, "Number of workers per training process."
-)
-flags.DEFINE_boolean("wandb", False, "If logging with wandb.")
-flags.DEFINE_string("wandb_project", None, "The name of the wandb project.")
-flags.DEFINE_string("verbose", "INFO", "Logging verbosity.")
-flags.DEFINE_integer("log_period", 100, "Number of training steps.")
-flags.DEFINE_integer("eval_period", 20, "Number of training steps.")
-flags.DEFINE_integer("save_period", 2000, "Number of training steps.")
-
-flags.DEFINE_integer("world_size", 1, "Number of processes.")
-flags.DEFINE_string("master_addr", "127.0.0.1", "The address to use.")
-flags.DEFINE_string("master_port", "10000", "The port to use.")
-flags.mark_flags_as_required(["sde_config", "e3_config"])
 
 
-def main(rank, e3_config):
+def main(rank):
+  FLAGS = flags.FLAGS
+  FLAGS(sys.argv)
+  world_size = FLAGS.world_size
+  os.environ["MASTER_ADDR"] = FLAGS.master_addr
+  os.environ["MASTER_PORT"] = FLAGS.master_port
+  FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
+  
+  # Create the working directory
+  Path(FLAGS.workdir).mkdir(exist_ok=True)
+  config_name = FLAGS.e3_config
+  e3_config = getattr(configs, config_name, None)
+  assert not e3_config is None, f"Config {config_name} not found."
+  e3_config = e3_config(FLAGS.config_spec)
+  FLAGS.sde_config.training.batch_size = e3_config.batch_size
+  
   logger = logging.getLogger()
+  formatter = logging.Formatter('%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
+  handler = logging.StreamHandler(sys.stdout)
+  handler.setFormatter(formatter)
+  logger.addHandler(handler)
   if rank == 0:
       # Set logger so that it outputs to both console and file
       # Make logging work for both disk and Google Cloud Storage
       gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
       handler = logging.StreamHandler(gfile_stream)
-      formatter = logging.Formatter('%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
       handler.setFormatter(formatter)
-      for handler in logger.handlers:
-        handler.setFormatter(formatter)
       logger.addHandler(handler)
       logger.setLevel(getattr(logging, FLAGS.verbose))
       # Run the training pipeline
@@ -254,32 +270,24 @@ def main(rank, e3_config):
   torch.manual_seed(FLAGS.seed)
   np.random.seed(FLAGS.seed)
   
-  mp.set_start_method("fork", force=True)
   dist.init_process_group("nccl", rank=rank, world_size=FLAGS.world_size)
-          
-  train(e3_config, FLAGS.sde_config)
+  train(e3_config, FLAGS)
 
 
-def launch_mp(argv):
-    world_size = FLAGS.world_size
-    os.environ["MASTER_ADDR"] = FLAGS.master_addr
-    os.environ["MASTER_PORT"] = FLAGS.master_port
-    FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
-    # Create the working directory
-    Path(FLAGS.workdir).mkdir(exist_ok=True)
-
-    config_name = FLAGS.e3_config
-    e3_config = getattr(configs, config_name, None)
-    assert not e3_config is None, f"Config {config_name} not found."
-    e3_config = e3_config(FLAGS.config_spec)
-
-    FLAGS.sde_config.training.batch_size = e3_config.batch_size
-  
-      
-    if world_size == 1:
-        main(0, e3_config)
-    else:
-        mp.spawn(main, args=(e3_config), nprocs=config.world_size, join=True)
+def launch_mp():
+  FLAGS = flags.FLAGS
+  FLAGS(sys.argv)
+  mp.set_start_method("spawn")
+  if FLAGS.world_size == 1:
+    main(0)
+  else:
+    processes = []
+    for rank in range(FLAGS.world_size):
+        p = mp.Process(target=main, args=(rank,))
+        p.start()
+        processes.append(p)
+    for p in processes:
+        p.join()
 
 if __name__ == "__main__":
-    app.run(launch_mp)
+  launch_mp()
