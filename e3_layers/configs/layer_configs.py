@@ -14,9 +14,10 @@ def featureModel(
     num_types,
     num_layers,
     r_max,
-    node_attrs=None,
+    node_attrs,
     edge_spherical=None,
-    avg_num_neighbors=10
+    avg_num_neighbors=10,
+    remat=False
 ):
     config = ConfigDict()
 
@@ -39,10 +40,11 @@ def featureModel(
 
     layers = {}
     layers["edge_vector"] = computeEdgeVector
-    layers["one_hot"] = {
-        "module": OneHotEncoding,
-        "irreps_out": (f"{num_types}x0e", "node_attrs"),
-        "irreps_in": ("1x0e", 'species'),
+    layers.update(embedCategorial(num_types, ('1x0e', 'species'), (node_attrs, 'node_attrs')))
+    layers['node_features'] = {
+        "module": PointwiseLinear,
+        "irreps_in": (f"{num_types}x0e", "onehot"),
+        "irreps_out": (f'{n_dim}x0e', "node_features"),
     }
     layers["spharm_edges"] = {
         "module": SphericalEncoding,
@@ -54,22 +56,9 @@ def featureModel(
         "r_max": r_max,
         "trainable": True,
         "polynomial_degree": 6,
-        "real": ('1x0e', 'edge_length'),
+        "irreps_in": ('1x0e', 'edge_length'),
         "irreps_out": (edge_radial, "edge_radial"),
     }
-    layers["chemical_embedding"] = {
-        "module": PointwiseLinear,
-        "irreps_in": (f"{num_types}x0e", "node_attrs"),
-        "irreps_out": (f"{n_dim}x0e", "node_features"),
-    }
-    if not node_attrs is None:
-        layers["node_attrs"] = {
-            "module": PointwiseLinear,
-            "irreps_in": (f"{num_types}x0e", "node_attrs"),
-            "irreps_out": (node_attrs, "node_attrs"),
-        }
-    else:
-        node_attrs = f'{num_types}x0e'
     irreps = {
         "node_attrs": node_attrs,
         "input_features": [node_features, "node_features"],
@@ -93,6 +82,8 @@ def featureModel(
         "nonlinearity_gates": {"e": "silu", "o": "tanhlu"},
         **irreps,
     }
+    if remat:
+        mp['remat'] = True
     cur_node_features = Irreps(f"{n_dim}x0e")
     node_features = Irreps(node_features)
     for layer_i in range(num_layers):
@@ -111,36 +102,21 @@ def featureModel(
     return config
 
 
-def addEdgeEmbedding(config, num_bond_types):
+def embedCategorial(num_types, irreps_in, irreps_out):
     layers = {}
-    config.num_bond_types = num_bond_types
-    n_dim, r_max, edge_radial = config.n_dim, config.r_max, config.edge_radial
-    layers["edge_onehot"] = {
+    layers["onehot"] = {
         "module": OneHotEncoding,
-         "num_types": num_bond_types,
-        "irreps_out": (f"{num_bond_types}x0e", "edge_onehot"),
-        "irreps_in": ("1x0e", "bond_type"),
+         "num_types": num_types,
+        "irreps_out": (f"{num_types}x0e", "onehot"),
+        "irreps_in": irreps_in,
     }
-    layers["edge_embedding"] = {
+    layers["embedding"] = {
         "module": PointwiseLinear,
-        "irreps_in": (f"{num_bond_types}x0e", "edge_onehot"),
-        "irreps_out": (f"{n_dim}x0e", "edge_embedding"),
+        "irreps_in": (f"{num_types}x0e", "onehot"),
+        "irreps_out": irreps_out,
     }
-    layers = list(layers.items())
-    config.layers = layers + config.layers
     
-    layer = {
-        "module": RadialBasisEncoding,
-        "r_max": r_max,
-        "trainable": True,
-        "polynomial_degree": 6,
-        "input_features": (f"{n_dim}x0e", "edge_embedding"),
-        "real": ('1x0e', "edge_length"),
-        "irreps_out": (edge_radial, "edge_radial"),
-    }
-    config.layers = replace(config.layers, 'radial_basis', ('radial_basis', layer))
-
-    return config
+    return layers
 
 
 def addEnergyOutput(config, shifts=None, output_key='total_energy'):

@@ -16,9 +16,9 @@ from tqdm import tqdm, trange
 
 import argparse
 
-INPUT = '/data/mmcif.gz'
-CACHE = '/data/mmcif'
-OUTPUT = '/data/protein_h5/'
+INPUT = '/mnt/vepfs/hb/mmcif_gz'
+CACHE = '/mnt/vepfs/hb/mmcif'
+OUTPUT = '/mnt/vepfs/hb/protein_h5/'
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--split', metavar='S', type=int,
                     help='')
@@ -306,26 +306,6 @@ aa_ids = {codification[key]:i for i, key in enumerate(codification.keys())}
 def name2id(x):
     return aa_ids[x]
 
-def generateEdges(start, end):
-    node_index = list(range(start, end))
-    node_index = np.array(node_index, dtype='int64')
-
-    edge_index_l = np.stack([node_index[:-1], node_index[1:]], axis=0)
-    edge_attr_l = np.ones(edge_index_l.shape[1], dtype='int64')
-
-    edge_index_r = np.stack([node_index[1:], node_index[:-1]], axis=0)
-    edge_attr_r = np.ones(edge_index_r.shape[1], dtype='int64')*2
-
-    edge_index = np.concatenate([edge_index_l, edge_index_r], axis=1)
-    edge_attr = np.concatenate([edge_attr_l, edge_attr_r], axis=0)
-
-    last_chain = chain
-    last_chain_end = cnt
-    
-    return edge_index, edge_attr
-
-if os.path.isfile(os.path.join('/data', f'pdb_{SPLIT}.hdf5')):
-    exit(0)
 proteins = []
 for root, dirs, files in os.walk(INPUT):
     files = tqdm(files, mininterval=60)
@@ -367,8 +347,6 @@ for root, dirs, files in os.walk(INPUT):
         
         cnt = 0
         aa_type = []
-        edge_index_lst = []
-        edge_attr_lst = []
         cumsum = [0]
         
         try:  # exception: seq == '0' instead of a letter
@@ -376,28 +354,23 @@ for root, dirs, files in os.walk(INPUT):
                 for j, res in enumerate(seq[i]):
                     aa_type.append(name2id(seq[i][j]))
                     cnt += 1
-
-                edge_index, edge_attr = generateEdges(cumsum[-1], cnt)
-                edge_index_lst.append(edge_index)
-                edge_attr_lst.append(edge_attr)
                 cumsum.append(cnt)
         except:
             continue
 
-        edge_index = np.concatenate(edge_index_lst, axis=1)
-        edge_attr = np.concatenate(edge_attr_lst, axis=0)
+        chain_id = np.zeros((cnt, 1), dtype='int64')
+        for i in range(len(cumsum)-1):
+            chain_id[cumsum[i]:cumsum[i+1]] = i
         
         pos = np.zeros((len(aa_type), 3), dtype='float32')
         pos_mask = [1]*len(aa_type)
         for i, ca in enumerate(struct):
             idx = cumsum[int(ca['label_entity_id'])-1] + int(ca['label_seq_id'])-1
             pos_mask[idx] = 0
-            pos[idx] = float(ca['Cartn_x']),
-            float(ca['Cartn_y']),
-            float(ca['Cartn_z'])
+            pos[idx] = float(ca['Cartn_x']), float(ca['Cartn_y']), float(ca['Cartn_z'])
 
         file = {'_n_nodes': cnt, 'aa_type': np.array(aa_type), 'pos': pos, 'pos_mask': np.array(pos_mask)}
-        file.update({'edge_index': edge_index, '_n_edges': edge_index.shape[1], 'edge_attr': edge_attr})
+        file.update({'chain_id': chain_id})
         proteins.append(file)
         
 path = os.path.join(OUTPUT, f'pdb_{SPLIT}.hdf5')
@@ -406,7 +379,6 @@ attrs['pos'] = ('node', '1x1o')
 attrs['pos_mask'] = ('node', '1x0e')
 attrs['aa_type'] = ('node', '1x0e')
 attrs['_n_nodes'] = ('graph', '1x0e')
-attrs['edge_attr'] = ('edge', '1x0e')
-attrs['_n_edges'] = ('graph', '1x0e')
+attrs['chain_id'] = ('node', '1x0e')
 batch = Batch.from_data_list(proteins, attrs)
 batch.dumpHDF5(path)

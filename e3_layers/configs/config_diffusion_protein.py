@@ -2,14 +2,14 @@ from functools import partial
 from ..data import computeEdgeIndex
 from ml_collections.config_dict import ConfigDict
 import ase
-from .layer_configs import featureModel, addEdgeEmbedding, addForceOutput, addEnergyOutput
-from ..nn import PointwiseLinear, RadialBasisEncoding, GraphFeatureEmbedding
+from .layer_configs import featureModel, addForceOutput, addEnergyOutput
+from ..nn import PointwiseLinear, RadialBasisEncoding, Broadcast, RelativePositionEncoding, Concat, symmetricCutoff
 from ..utils import insertAfter, saveProtein
 import torch
 
 def posMask(batch):
     batch['pos'] = batch['pos'] + batch['pos_mask']*torch.randn(batch['pos'].shape) # a cluster at the center
-    batch['species'] = batch['species'] + batch['pos_mask']*batch['species'] # mark as masked
+    batch['species'] = batch['species'] + batch['pos_mask']*23
     return batch
 def maskSpecies(batch):
     batch['species'] = batch['species']*0
@@ -22,26 +22,19 @@ def get_config(spec=''):
     config.model_config = model
 
     config.learning_rate = 1e-2
-    config.batch_size = 2
-    config.grad_acc = 128
+    config.batch_size = 1
+    config.grad_acc = 16
     
     config.use_ema = True
     config.ema_decay = 0.99
     config.config_spec = spec
     config.ema_use_num_updates = True
-  #  config.metric_key = "validation_loss"  # saves the best model according to this
 
-  #  config.max_epochs = int(1e6)
-  #  config.early_stopping_patiences = {"validation_loss": 20}
-  #  config.early_stopping_lower_bounds = {"LR": 1e-6}
-
-  #  config.loss_coeffs = {"dipole": [1e3, "MSELoss"]}
-  #  config.metrics_components = {"dipole": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
     config.lr_scheduler_patience = 1
     config.lr_scheduler_factor = 0.8
-    config.grad_clid_norm = None
+    config.grad_clid_norm = 1.
     config.saveMol = saveProtein
     
     model.n_dim = 32
@@ -57,8 +50,7 @@ def get_config(spec=''):
     data.std = 25.83
     data.train_val_split = "random"
     data.shuffle = True
-    #data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(8)]
-    data.path = '/mnt/vepfs/hb/protein_small/0'
+    data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(7)]
     data.preprocess = []
     if not 'gcn' in spec:
         data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
@@ -67,11 +59,7 @@ def get_config(spec=''):
         
     data.preprocess.append(posMask)
     
-    data.key_map = {"aa_type": "species", "R": "pos", "edge_attr": "bond_type"}
-    
-    if spec and 'profiling' in spec:
-        data.n_train = 2048
-        data.n_val = 256
+    data.key_map = {"aa_type": "species", "R": "pos"}
 
     features = "+".join(
         [f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)]
@@ -87,62 +75,59 @@ def get_config(spec=''):
         num_types=num_types,
         num_layers=model.num_layers,
         r_max=model.r_max,
-        avg_num_neighbors=2500
+        avg_num_neighbors=1500,
+        remat=False
     )
-    layer_configs = addEdgeEmbedding(layer_configs, num_bond_types=3)
-
-    if 'embed_time_in_nodes' in spec:
-        time_encoding = ('time_encoding', {
-            "module": RadialBasisEncoding,
-            "r_max": 1.0,
-            "trainable": True,
-            "polynomial_degree": 6,
-            "real": ("1x0e", "t"),
-            'one_over_r': False,
-            "irreps_out": (f"{model.n_dim}x0e", "time_encoding"),
-        })
-        layer_configs.layers = insertAfter(layer_configs.layers, 'node_attrs', time_encoding)
-        time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
-                                             'graph': (f"{model.n_dim}x0e", 'time_encoding'),
-                                             'node_in': (f"{model.node_attrs}", 'node_attrs'),
-                                             'node_out': (f"{model.node_attrs}", 'node_attrs')
-                                            })
-    elif 'embed_time_in_edges' in spec:
-        time_encoding = ('time_encoding', {
-            "module": RadialBasisEncoding,
-            "r_max": 1.0,
-            "trainable": True,
-            "polynomial_degree": 6,
-            "real": ("1x0e", "t"),
-            'one_over_r': False,
-            "irreps_out": (model.edge_radial, "time_encoding"),
-        })
-        layer_configs.layers = insertAfter(layer_configs.layers, 'radial_basis', time_encoding)
-        time_embedding = ('time_embedding', {'module': GraphFeatureEmbedding,
-                                         'graph': (model.edge_radial, 'time_encoding'),
-                                         'edge_in': (model.edge_radial, 'edge_radial'),
-                                         'edge_out': (model.edge_radial, 'edge_radial')
-                                        })
-    else:
-        print('WARINING: Not using time embedding!')
-        time_embedding = None
-    if not time_embedding is None:
-        layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', time_embedding)
     
-    if 'nll' in spec:
-        layer_configs = addEnergyOutput(layer_configs, shifts=None, output_key='nll')
-        layer_configs = addForceOutput(layer_configs, y='nll', gradients='score')
-    else: # predict scores directly
-        layer_configs.layers.append(
-            (
-                "score_output",
-                {
-                    "module": PointwiseLinear,
-                    "irreps_in": (features, "node_features"),
-                    "irreps_out": (f"1x1o", "score"),
-                },
-            )
+    relative_position = {
+        "module": RadialBasisEncoding,
+        "r_max": 30,
+        "cutoff": symmetricCutoff,
+        "trainable": True,
+        'one_over_r': False,
+    }
+    relative_position = ('relative_position', {'module': RelativePositionEncoding,
+                                              'segment': ('1x0e', 'chain_id'),
+                                              'irreps_out':  (model.edge_radial, "rel_pos_embed"),
+                                              'radial_encoding': relative_position})
+    concat = ('concat1', {'module': Concat,
+              'rel_pos':(model.edge_radial, "rel_pos_embed"),
+              'edge_radial':(model.edge_radial, "edge_radial"),
+              'irreps_out' : (model.edge_radial, "edge_radial")})
+    layer_configs.layers = [relative_position] + layer_configs.layers
+    layer_configs.layers = insertAfter(layer_configs.layers, 'radial_basis', concat)
+    
+    time_encoding = ('time_encoding', {
+        "module": RadialBasisEncoding,
+        "r_max": 1.0,
+        "trainable": True,
+        "irreps_in": ("1x0e", "t"),
+        'one_over_r': False,
+        "irreps_out": (f"{model.n_dim}x0e", "time_encoding"),
+    })
+    layer_configs.layers = insertAfter(layer_configs.layers, 'embedding', time_encoding)
+    graph2node = ('graph2node', {'module': Broadcast, 
+                                 'irreps_in': (f"{model.n_dim}x0e", "time_encoding"),
+                                 'irreps_out': (f"{model.n_dim}x0e", "time_encoding"),
+                                 'to': 'node'})
+    layer_configs.layers = insertAfter(layer_configs.layers, 'time_encoding', graph2node)
+    concat = ('concat2', {'module': Concat,
+              'node_attrs':(model.node_attrs, "node_attrs"),
+              'time_encoding':(f"{model.n_dim}x0e", "time_encoding"),
+              'irreps_out':(model.node_attrs, "node_attrs")})
+    layer_configs.layers = insertAfter(layer_configs.layers, 'graph2node', concat)
+    
+    
+    layer_configs.layers.append(
+        (
+            "score_output",
+            {
+                "module": PointwiseLinear,
+                "irreps_in": (features, "node_features"),
+                "irreps_out": (f"1x1o", "score"),
+            },
         )
+    )
     # the gradients are in fact -score, sign will be reversed in score_fn
     model.update(layer_configs)
 

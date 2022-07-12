@@ -25,6 +25,9 @@ class CondensedDataset(Batch):
     """
 
     def __init__(self, path=None, data={}, attrs={}, key_map={}, type_names=None, preprocess=[], **kwargs):
+        """
+        If path is provided, loads the dataset from file(s). The path parameter may specify a file, a list of files, a directory, or a directory and a regular_expression separated by ':'.
+        """
         if not path is None:
             data, attrs = CondensedDataset.load(path)
             if isinstance(data, list):

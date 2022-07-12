@@ -8,7 +8,6 @@ from ..data import Data
 from ..utils import build, keyMap
 from torch.profiler import record_function
 
-
 class Module(torch.nn.Module):
     def init_irreps(self, output_keys=[], **kwargs):
         if isinstance(output_keys, str):
@@ -19,18 +18,18 @@ class Module(torch.nn.Module):
         self.output_key_mapping = {}
         for key, value in kwargs.items():
             if isinstance(value, str) or isinstance(value, Irreps):
-                irreps, custom_keys = value, key
+                irreps, custom_key = value, key
             elif isinstance(value, list) or isinstance(value, tuple):
-                irreps, custom_keys = value[0], value[1:]
+                assert len(value)==2
+                irreps, custom_key = value[0], value[1]
             else: # value is None
                 continue 
             if key in output_keys:
                 self.irreps_out[key] = Irreps(irreps)
-                self.output_key_mapping[key] = custom_keys
+                self.output_key_mapping[key] = custom_key
             else:
                 self.irreps_in[key] = Irreps(irreps)
-                for custom_key in custom_keys:
-                    self.input_key_mapping[custom_key] = key
+                self.input_key_mapping[custom_key] = key
 
     def inputKeyMap(self, input):
         return keyMap(input, self.input_key_mapping)
@@ -47,10 +46,11 @@ class SequentialGraphNetwork(torch.nn.Sequential):
     def __init__(self, **config):
         layer_configs = OrderedDict(config["layers"])
         self.layers = []
+        self.layer_configs = layer_configs
         modules = {}
         for i, (key, value) in enumerate(layer_configs.items()):
             if isinstance(value, ConfigDict) or isinstance(value, dict):
-                module = build(value, **config)
+                module = build(value)
                 modules[key] = module
                 self.layers += [(key, module)]
             elif callable(value):

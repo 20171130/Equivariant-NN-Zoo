@@ -19,7 +19,15 @@ from torch import nn
 
 from e3nn.math import soft_one_hot_linspace
 from e3nn.util.jit import compile_mode
+from ml_collections.config_dict import ConfigDict
+from ..utils import build
 
+
+def symmetricCutoff(r_max, **kwargs):
+    def func(x):
+        x = x/r_max
+        return (x-1)**2 *(x+1)**2 *(abs(x)<1.).float()
+    return func
 
 @torch.jit.script
 def _poly_cutoff(x: torch.Tensor, factor: float, p: float = 6.0) -> torch.Tensor:
@@ -63,45 +71,11 @@ class PolynomialCutoff(torch.nn.Module):
         return _poly_cutoff(x, self._factor, p=self.p)
 
 
-@compile_mode("trace")
-class e3nn_basis(nn.Module):
-    r_max: float
-    r_min: float
-    e3nn_basis_name: str
-    num_basis: int
-
-    def __init__(
-        self,
-        r_max: float,
-        r_min: Optional[float] = None,
-        e3nn_basis_name: str = "gaussian",
-        num_basis: int = 8,
-    ):
-        super().__init__()
-        self.r_max = r_max
-        self.r_min = r_min if r_min is not None else 0.0
-        self.e3nn_basis_name = e3nn_basis_name
-        self.num_basis = num_basis
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return soft_one_hot_linspace(
-            x,
-            start=self.r_min,
-            end=self.r_max,
-            number=self.num_basis,
-            basis=self.e3nn_basis_name,
-            cutoff=True,
-        )
-
-    def _make_tracing_inputs(self, n: int):
-        return [{"forward": (torch.randn(5, 1),)} for _ in range(n)]
-
-
 class BesselBasis(nn.Module):
     r_max: float
     prefactor: float
 
-    def __init__(self, r_max, num_basis=8, trainable=True, one_over_r=True):
+    def __init__(self, r_max, r_min=0, num_basis=8, trainable=True, one_over_r=True):
         r"""Radial Bessel Basis, as proposed in DimeNet: https://arxiv.org/abs/2003.03123
 
 
@@ -125,7 +99,8 @@ class BesselBasis(nn.Module):
         self.num_basis = num_basis
 
         self.r_max = float(r_max)
-        self.prefactor = 2.0 / self.r_max
+        self.r_min = float(r_min)
+        self.prefactor = 2.0 / (self.r_max - self.r_min)
         self.one_over_r = one_over_r
 
         bessel_weights = (
@@ -145,7 +120,7 @@ class BesselBasis(nn.Module):
         x : torch.Tensor
             Input
         """
-        numerator = torch.sin(self.bessel_weights * x.unsqueeze(-1) / self.r_max)
+        numerator = torch.sin(self.bessel_weights * x.unsqueeze(-1) / (self.r_max - self.r_min))
         result = self.prefactor * numerator
         if self.one_over_r:
             result = result/x.unsqueeze(-1)
@@ -212,117 +187,105 @@ class RadialBasisEncoding(Module):
     def __init__(
         self,
         r_max,
-        polynomial_degree,
         trainable,
         irreps_out,
+        r_min=0,
+        polynomial_degree=6,
         basis=BesselBasis,
         cutoff=PolynomialCutoff,
-        real="1x0e",
-        one_over_r = True,
-        input_features=None,
+        irreps_in="1x0e",
+        one_over_r = True
     ):
         """
-        Radial basis embedding of a positive real number. Optionally composes the embedding with input features.
+        Radial basis embedding of a real number.
         """
         super().__init__()
         self.init_irreps(
-            real=real,
-            input_features=input_features,
+            input=irreps_in,
             radial_embedding=irreps_out,
             output_keys=["radial_embedding"],
         )
         num_basis = self.irreps_out["radial_embedding"]
         num_basis = num_basis[0].mul
-        self.basis = basis(r_max, num_basis, trainable, one_over_r=one_over_r)
+        self.basis = basis(r_max, r_min, num_basis, trainable, one_over_r=one_over_r)
         self.cutoff = cutoff(r_max, p=polynomial_degree)
-        if not input_features is None:
-            self.linear = PointwiseLinear(self.irreps_out["radial_embedding"]+self.irreps_in['input_features'], 
-                                          self.irreps_out["radial_embedding"])
-
+        
     def forward(self, data):
-        input = self.inputKeyMap(data)
-        input_features = None
-        real = input['real']
-        if "input_features" in input:
-            input_features = input["input_features"]
+        if isinstance(data, torch.Tensor):
+            input = data
+            is_per = None
+        else:
+            input = self.inputKeyMap(data)
+            is_per = input.attrs['input'][0]
+            input = input['input']
         embedded = (
-            self.basis(real) * self.cutoff(real)[:, None]
-        ).view(real.shape[0], -1)
-        if not input_features is None:
-            embedded = self.linear(torch.cat([embedded, input_features], dim=-1))
-        is_per = input.attrs['real'][0]
-        data.attrs.update(
-            self.outputKeyMap(
-                {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
+            self.basis(input) * self.cutoff(input)[:, None]
+        ).view(input.shape[0], -1)
+        
+        if isinstance(data, torch.Tensor):
+            return embedded
+        else:
+            data.attrs.update(
+                self.outputKeyMap(
+                    {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
+                )
             )
-        )
-        data.update(self.outputKeyMap({"radial_embedding": embedded}))
-        return data
-      
+            data.update(self.outputKeyMap({"radial_embedding": embedded}))
+            return data
+          
+          
 @compile_mode("script")
-class GraphFeatureEmbedding(Module):
+class Broadcast(Module):
     def __init__(
-        self, graph=None, edge_in=None, node_in=None, edge_out=None, node_out=None
+        self,
+        irreps_in,
+        irreps_out,
+        to
     ):
         """
-        Broadcast graph features into edge or node features.
+        Broadcasts graph features to nodes or edges, or node features to edges.
         """
         super().__init__()
         self.init_irreps(
-            graph = graph,
-            edge_in = edge_in, edge_out=edge_out,
-            node_in = node_in, node_out=node_out,
-            output_keys=["edge_out", "node_out"],
+            input=irreps_in,
+            output=irreps_out,
+            output_keys=["output"],
         )
-        if 'edge_out' in self.irreps_out:
-            irreps_in = self.irreps_in['edge_in'] + self.irreps_in['graph']
-            self.linear_edge = PointwiseLinear(irreps_in, self.irreps_out['edge_out'])
-        if 'node_out' in self.irreps_out:
-            irreps_in = self.irreps_in['node_in'] + self.irreps_in['graph']
-            self.linear_node = PointwiseLinear(irreps_in, self.irreps_out['node_out'])
+        self.to = to
+
 
     def forward(self, data):
         input = self.inputKeyMap(data)
-        
-        if 'edge_out' in self.irreps_out:
-            device = input['graph'].device
-            feature = input['graph'][data.edgeSegment()]
-            feature = feature/feature.shape[-1]**0.5
-            if 'edge_in' in self.irreps_in:
-                feature = torch.cat([input['edge_in'], feature], dim=1)
-            feature = self.linear_edge(feature)
-            data.attrs.update(
-                self.outputKeyMap(
-                    {"edge_out": ("edge", self.irreps_out["edge_out"])}
-                )
+        is_per = input.attrs['input'][0]
+        input = input['input']
+
+        if is_per == 'graph':
+            if self.to == 'node':
+                output = input[data.nodeSegment()]
+            elif self.to == 'edge':
+                output = input[data.edgeSegment()]
+            else:
+                raise ValueError()
+        else:
+            raise UnimplementedError()
+
+        data.attrs.update(
+            self.outputKeyMap(
+                {"output": (self.to, self.irreps_out["output"])}
             )
-            data.update(self.outputKeyMap({"edge_out": feature}))
-          
-        if 'node_out' in self.irreps_out:
-            device = input['graph'].device
-            feature = input['graph'][data.nodeSegment()]
-            if 'node_in' in self.irreps_in:
-                feature = torch.cat([input['node_in'], feature], dim=1)
-            feature = self.linear_node(feature)
-            data.attrs.update(
-                self.outputKeyMap(
-                    {"node_out": ("node", self.irreps_out["node_out"])}
-                )
-            )
-            data.update(self.outputKeyMap({"node_out": feature}))
-        
+        )
+        data.update(self.outputKeyMap({"output": output}))
         return data
+
 
 @compile_mode("script")
 class OneHotEncoding(Module):
     num_types: int
-    set_features: bool
 
     def __init__(
         self,
         num_types: int,
         irreps_out,
-        set_features: bool = True,
         irreps_in="0x0e",
     ):
         super().__init__()
@@ -345,4 +308,36 @@ class OneHotEncoding(Module):
         )
         result = {"one_hot": one_hot}
         data.update(self.outputKeyMap(result))
+        return data
+      
+@compile_mode("script")
+class RelativePositionEncoding(Module):
+    def __init__(
+        self,
+        radial_encoding,
+        segment,
+        irreps_out
+    ):
+        super().__init__()
+        self.init_irreps(input=segment, output=irreps_out, output_keys=['output'])
+        radial_encoding['irreps_in'] = '1x0e'
+        radial_encoding['irreps_out'] = self.irreps_out['output']
+        radial_encoding = build(radial_encoding)
+        self.radial = radial_encoding
+        
+
+    def forward(self, data):
+        segment = self.inputKeyMap(data)['input']
+        relative_pos = data['edge_index'][0] - data['edge_index'][1]
+        mask = segment[data['edge_index'][0]] == segment[data['edge_index'][1]]
+        mask = mask.float()
+        relative_pos = mask*relative_pos.view(-1, 1) + (1-mask)*1e5
+        output = self.radial(relative_pos)
+
+        data.attrs.update(
+            self.outputKeyMap(
+                {"output": ('edge', self.irreps_out["output"])}
+            )
+        )
+        data.update(self.outputKeyMap({"output": output}))
         return data

@@ -128,3 +128,51 @@ class ResBlock(Module):
             )
             data.update(self.outputKeyMap({"output": output}))
             return data
+
+class Concat(Module):
+    def __init__(self, irreps_out, **irreps_in):
+        super().__init__()
+        self.init_irreps(**irreps_in, output=irreps_out, output_keys=["output"])
+        lst = [value for value in self.irreps_in.values()]
+        irreps_in = lst[0]
+        for i in range(1, len(lst)):
+            irreps_in += lst[i]
+        self.linear = Linear(irreps_in=irreps_in, irreps_out=self.irreps_out['output'], biases=True)
+        
+    def forward(self, data):
+        input = self.inputKeyMap(data)
+        input = torch.cat([input[key] for key in self.irreps_in.keys()], dim = 1)
+        output = self.linear(input)
+
+        key = list(self.irreps_in.keys())[0]
+        is_per = self.inputKeyMap(data.attrs)[key][0]
+        data.attrs.update(
+            self.outputKeyMap({"output": (is_per, self.irreps_out["output"])})
+        )
+        data.update(self.outputKeyMap({"output": output}))
+        return data
+
+class Split(Module):
+    def __init__(self, irreps_in, **irreps_out):
+        super().__init__()
+        self.init_irreps(input = irreps_in, **irreps_out, output_keys=[key for key in irreps_out])
+        lst = [value for value in self.irreps_out.values()]
+        irreps_out = lst[0]
+        for i in range(1, len(lst)):
+            irreps_out += lst[i]
+        self.linear = Linear(irreps_in=self.irreps_in['input'], irreps_out=irreps_out, biases=True)
+        
+    def forward(self, data):
+        input = self.inputKeyMap(data)['input']
+        result = self.linear(input)
+        output = {}
+        cnt = 0
+        for key, value in self.irreps_out.items():
+            inc = value.dim
+            output[key] = result[cnt:cnt+inc]
+            cnt += inc
+        is_per = self.inputKeyMap(data.attrs)['input'][0]
+        output_attrs = {key: (is_per, value) for key in self.irreps_out.items()}
+        data.attrs.update(self.outputKeyMap(output_attrs))
+        data.update(self.outputKeyMap(output))
+        return data

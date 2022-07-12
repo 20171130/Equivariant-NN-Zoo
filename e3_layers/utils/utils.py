@@ -59,8 +59,6 @@ def build(node, **kwargs):
     """Instantiates a layer using its config node"""
     if isinstance(node, dict) or isinstance(node, ConfigDict):
         func = node["module"]
-        if "module" in kwargs:
-            kwargs.pop("module")
         kwargs.update(**node)
 
     elif isinstance(node, list) or isinstance(node, tuple):
@@ -71,6 +69,8 @@ def build(node, **kwargs):
         func = node
 
     args = []
+    if "module" in kwargs:
+        kwargs.pop("module")
     kwargs = pruneArgs(func, **kwargs)
     return func(*args, **kwargs)
 

@@ -53,13 +53,20 @@ class Batch(Data):
             if not '_n_nodes' in item:
                 assert node_key is not None, 'Unable to infer the amount of nodes.'
                 item["_n_nodes"] = torch.ones((1, 1), dtype=torch.long)*item[node_key].shape[0]
+            elif not isinstance(item['_n_nodes'], torch.Tensor):
+                item['_n_nodes'] = torch.tensor(item['_n_nodes']).view(-1, 1)
             if not '_n_edges' in item and 'edge_index' in item:
                 item["_n_edges"] = torch.zeros((1, 1), dtype=torch.long)*item['edge_index'].shape[1]
+            elif '_n_edges' in item  and not isinstance(item['_n_edges'], torch.Tensor):
+                item['_n_edges'] = torch.tensor(item['_n_edges']).view(-1, 1)
+                
         data['_n_nodes'] = torch.cat([item['_n_nodes'] for item in lst])
         if '_n_edges' in lst[0]:
             data['_n_edges'] = torch.cat([item['_n_edges'] for item in lst])
         
         for key in lst[0].keys():
+            if key in data:
+                continue
             if key == "edge_index":
                 to_cat = []
                 graph_cnt = 0
