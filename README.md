@@ -158,6 +158,8 @@ A good pratice is:
 
 The second group of hyper-parameters controls the rate of learning rate dacay, in another words, how long the model is trained. The groupd includes `lr_scheduler_patience`, `lr_scheduler_factor` and `epoch_subdivision`. The learning rate is multiplied by `lr_scheduler_factor` if the metrics have not improved in `(lr_scheduler_patience+1)/epoch_subdivision` epochs. You may fix `lr_scheduler_factor` to be 0.8 and change the `lr_scheduler_patience`. This might be the most important hyperparameter that needs manual tuning. The optimal value for `lr_scheduler_patience` depends on the learning task, the model and the size of the dataset.  You may need to try multiple values to find out a proper one.
 
+# TorchMD Integration
+Examples for running MD simulation with [torchMD](https://github.com/torchmd/torchmd) and E3_layers are provided in torchMD.ipynb. You need to install [moleculekit](https://github.com/Acellera/moleculekit) and [Parmd](https://github.com/ParmEd/ParmEd) in order to use torchMD.
 
 # Modules Provided
 

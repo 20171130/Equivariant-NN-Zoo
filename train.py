@@ -18,16 +18,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import wandb
 
-from models.ema import ExponentialMovingAverage
-import likelihood as likelihood
-
 from e3_layers.utils import build, pruneArgs, _countParameters, save_checkpoint, restore_checkpoint
 from e3_layers import configs
 from e3_layers.data import Batch, computeEdgeVector, getDataIters, CondensedDataset
-import e3_layers.run.sde_utils as losses
-import e3_layers.run.sde_utils as sde_lib
-from e3_layers.run.sde_utils import getScaler
-import e3_layers.run.sde_sampling as sampling
 
 config_flags.DEFINE_config_file(
   "sde_config", None, "Training sde_configuration.", lock_config=True)
@@ -56,7 +49,7 @@ flags.mark_flags_as_required(["config"])
 
 
 def train_regression(config, FLAGS):
-  if FLAGS.wandb and rank == 0:
+  if FLAGS.wandb and dist.get_rank() == 0:
       from e3_layers.run.trainer import TrainerWandB as Trainer
   else:
       from e3_layers.run.trainer import Trainer
@@ -74,6 +67,12 @@ def train_regression(config, FLAGS):
   trainer.train()
 
 def train_diffusion(e3_config, FLAGS):
+  from models.ema import ExponentialMovingAverage
+  import likelihood as likelihood
+  import e3_layers.run.sde_utils as losses
+  import e3_layers.run.sde_utils as sde_lib
+  from e3_layers.run.sde_utils import getScaler
+  import e3_layers.run.sde_sampling as sampling
   """Runs the training pipeline.
 
   Args:

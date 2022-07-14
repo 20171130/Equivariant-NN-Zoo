@@ -22,6 +22,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from e3nn.o3 import Irreps
 from ml_collections.config_dict import ConfigDict
+from absl import flags
 
 from ..data import DataLoader, CondensedDataset
 from ..utils import (
@@ -133,7 +134,9 @@ class Trainer:
     def init_objects(self):
 
         self.model.to(self.torch_device)
-        self.model = DDP(self.model)
+        FLAGS = flags.FLAGS
+        if FLAGS.world_size > 1:
+            self.model = DDP(self.model)
 
         self.num_weights = sum(p.numel() for p in self.model.parameters())
         self.logger.info(f"Number of weights: {self.num_weights}")
@@ -290,7 +293,7 @@ class Trainer:
             # PyTorch recommends this for GPU since it makes copies much faster
             pin_memory=(self.torch_device != torch.device("cpu")),
             # avoid getting stuck
-            timeout=(10 if FLAGS.dataloader_num_workers > 0 else 0),
+            timeout=(60 if FLAGS.dataloader_num_workers > 0 else 0),
             # use the right randomness
             generator=self.loader_rng,
         )
@@ -568,7 +571,7 @@ class Trainer:
 
         header = "epoch, wall, LR"
 
-        categories = ["training", "validation"] if self.iepoch > 0 else ["validation"]
+        categories = ["training", "validation"]
         log_header = {}
         log_str = {}
 

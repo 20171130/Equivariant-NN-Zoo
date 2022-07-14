@@ -38,11 +38,11 @@ def get_config(spec=None):
     model.node_attrs = "8x0e"
     num_types = 10
 
-    data.n_train = 1200#00
+    data.n_train = 120000
     data.n_val = 10831
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = "qm9.hdf5"
+    data.path = "/opt/shared-data/qm9.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
     data.key_map = {"Z": "species", "R": "pos", "U": "total_energy"}
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]

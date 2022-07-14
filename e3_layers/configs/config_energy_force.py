@@ -21,13 +21,13 @@ def get_config(spec=None):
     config.use_ema = True
     config.ema_decay = 0.99
     config.ema_use_num_updates = True
-    config.metric_key = "validation_loss"  # saves the best model according to this
+    config.metric_key = "training_loss"  # saves the best model according to this
 
     config.max_epochs = int(1e6)
-    config.early_stopping_patiences = {"validation_loss": 20}
+    config.early_stopping_patiences = {"training_loss": 20}
     config.early_stopping_lower_bounds = {"LR": 1e-6}
 
-    config.loss_coeffs = {"energy": [1e3, "MSELoss"], "forces": [1e3, "MSELoss"]}
+    config.loss_coeffs = {"energy": [1e3, "MSELoss"], "forces": [3e4, "MSELoss"]}
     config.metrics_components = {"energy": ["mae"], "forces": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
@@ -36,9 +36,9 @@ def get_config(spec=None):
 
     model.n_dim = 64
     model.l_max = 2
-    model.r_max = 4.0
+    model.r_max = 5.0
     model.num_layers = 5
-    model.node_attrs = "16x0e"
+    model.node_attrs = "8x0e"
     num_types = 20
 
     data.n_train = 2560000
