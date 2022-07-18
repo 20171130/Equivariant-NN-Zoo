@@ -11,6 +11,9 @@ from .pointwise import PointwiseLinear, ResBlock, TensorProductExpansion
 from torch_runstats.scatter import scatter
 from copy import copy
 
+from torch import Tensor
+from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple
 
 @compile_mode("script")
 class GradientOutput(Module):
@@ -20,7 +23,7 @@ class GradientOutput(Module):
         assert sign in (1.0, -1.0)
         self.sign = sign
         self.init_irreps(x=x, y=y, gradients=gradients, output_keys=['gradients'])
-        assert self.irreps_in["y"].lmax == 0
+        assert Irreps(self.irreps_in["y"]).lmax == 0
         if isinstance(func, dict) or isinstance(func, ConfigDict):
             func = build(func, **kwargs)
         self.func = func
@@ -47,7 +50,7 @@ class GradientOutput(Module):
             self.outputKeyMap({"gradients": (is_per, self.irreps_out["gradients"])})
         )
         output.update(self.outputKeyMap({"gradients": grad}))
-        return data
+        return output
 
 
 class Pooling(Module, torch.nn.Module):
@@ -60,18 +63,15 @@ class Pooling(Module, torch.nn.Module):
         self.reduce = reduce
         assert reduce in ("sum", "mean")
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)["input"]
-        batch = data.nodeSegment().to(input.device)
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data['input']
+        batch = data['_node_segment'].to(input.device)
         output = scatter(input, batch, dim=0, reduce=self.reduce)
 
         is_per = "graph"
-        data.attrs.update(
-            self.outputKeyMap({"output": (is_per, self.irreps_out["output"])})
-        )
-        output = self.outputKeyMap({"output": output})
-        data.update(output)
-        return data
+        attrs = {"output": (is_per, self.irreps_out["output"])}
+        data = {"output": output}
+        return data, attrs
 
 
 class Pairwise(Module, torch.nn.Module):

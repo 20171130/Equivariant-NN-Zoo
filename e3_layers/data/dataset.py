@@ -35,7 +35,9 @@ class CondensedDataset(Batch):
         super().__init__(attrs, **data)
         self.data = keyMap(self.data, key_map)
         self.attrs = keyMap(self.attrs, key_map)
-            
+        self.attrs = {key:(value[0], value[1]) for key, value in self.attrs.items()}
+        # converts from object array to tuple
+             
         if type_names == None:
             type_names = ase.atom.atomic_numbers.keys()
         self.type_names = list(type_names)

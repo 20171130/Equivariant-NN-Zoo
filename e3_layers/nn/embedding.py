@@ -1,16 +1,17 @@
 import torch
 
 from e3nn import o3
-from e3nn.util.jit import compile_mode
+from e3nn.o3 import Irreps
 
 from .sequential import Module
 from .pointwise import PointwiseLinear
 import torch
 import torch.nn.functional
 
+from torch import Tensor
 from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple
 
-from typing import Optional
 import math
 
 import torch
@@ -155,31 +156,27 @@ class SphericalEncoding(Module):
             spherical_harmonics=irreps_out,
             output_keys=["spherical_harmonics"],
         )
-        self.mul = self.irreps_in["vectors"][0].mul
+        self.mul = Irreps(self.irreps_in["vectors"])[0].mul
         irreps = []
-        for irrep in self.irreps_out["spherical_harmonics"]:
+        for irrep in Irreps(self.irreps_out["spherical_harmonics"]):
             assert irrep.mul == self.mul
             irreps += [str(irrep.ir)]
         self.sh = o3.SphericalHarmonics(
             "+".join(irreps), edge_sh_normalize, edge_sh_normalization
         )
 
-    def forward(self, data):
-        vectors = self.inputKeyMap(data)["vectors"]
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        vectors = data["vectors"]
         cat, _ = vectors.shape
         edge_sh = self.sh(vectors.view(cat, self.mul, 3)).view(cat, -1)
-        data.attrs.update(
-            self.outputKeyMap(
-                {
+        attrs = {
                     "spherical_harmonics": (
                         "edge",
                         self.irreps_out["spherical_harmonics"],
                     )
                 }
-            )
-        )
-        data.update(self.outputKeyMap({"spherical_harmonics": edge_sh}))
-        return data
+        data = {"spherical_harmonics": edge_sh}
+        return data, attrs
 
 
 @compile_mode("script")
@@ -205,33 +202,21 @@ class RadialBasisEncoding(Module):
             radial_embedding=irreps_out,
             output_keys=["radial_embedding"],
         )
-        num_basis = self.irreps_out["radial_embedding"]
+        num_basis = Irreps(self.irreps_out["radial_embedding"])
         num_basis = num_basis[0].mul
         self.basis = basis(r_max, r_min, num_basis, trainable, one_over_r=one_over_r)
         self.cutoff = cutoff(r_max, p=polynomial_degree)
         
-    def forward(self, data):
-        if isinstance(data, torch.Tensor):
-            input = data
-            is_per = None
-        else:
-            input = self.inputKeyMap(data)
-            is_per = input.attrs['input'][0]
-            input = input['input']
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data['input']
+        is_per = attrs['input'][0]
         embedded = (
             self.basis(input) * self.cutoff(input)[:, None]
         ).view(input.shape[0], -1)
         
-        if isinstance(data, torch.Tensor):
-            return embedded
-        else:
-            data.attrs.update(
-                self.outputKeyMap(
-                    {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
-                )
-            )
-            data.update(self.outputKeyMap({"radial_embedding": embedded}))
-            return data
+        attrs = {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
+        data = {"radial_embedding": embedded}
+        return data, attrs
           
           
 @compile_mode("script")
@@ -292,23 +277,17 @@ class OneHotEncoding(Module):
         self.num_types = num_types
         self.init_irreps(input=irreps_in, one_hot=irreps_out, output_keys="one_hot")
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)["input"]
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data["input"]
         type_numbers = input.squeeze(-1)
 
         one_hot = torch.nn.functional.one_hot(
             type_numbers, num_classes=self.num_types
         ).to(device=type_numbers.device, dtype=torch.float)
 
-        tmp = self.inputKeyMap(data.attrs)
-        data.attrs.update(
-            self.outputKeyMap(
-                {"one_hot": (tmp["input"][0], self.irreps_out["one_hot"])}
-            )
-        )
-        result = {"one_hot": one_hot}
-        data.update(self.outputKeyMap(result))
-        return data
+        attrs = {"one_hot": (attrs["input"][0], self.irreps_out["one_hot"])}
+        data = {"one_hot": one_hot}
+        return data, attrs
       
 @compile_mode("script")
 class RelativePositionEncoding(Module):

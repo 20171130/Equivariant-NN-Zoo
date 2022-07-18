@@ -241,7 +241,7 @@ def train_diffusion(e3_config, FLAGS):
 def main(rank):
   torch.cuda.set_device(rank)
   torch.cuda.empty_cache()
-  torch.jit.set_fusion_strategy([('STATIC', 2), ('DYNAMIC', 2)])
+  torch.jit.set_fusion_strategy([('DYNAMIC', 3)])
   FLAGS = flags.FLAGS
   FLAGS(sys.argv)
   world_size = FLAGS.world_size

@@ -35,7 +35,8 @@ def get_config(spec=None):
     model.l_max = 3
     model.r_max = 4.0
     model.num_layers = 4
-    model.node_attrs = "8x0e"
+    model.node_attrs = "16x0e"
+    model.jit = True
     num_types = 10
 
     data.n_train = 120000

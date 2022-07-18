@@ -4,9 +4,10 @@ from ml_collections.config_dict import ConfigDict
 import torch
 
 from e3nn.o3 import Irreps
-from ..data import Data
+from ..data import Data, Batch
 from ..utils import build, keyMap
 from torch.profiler import record_function
+from e3nn.util.jit import script, trace
 
 class Module(torch.nn.Module):
     def init_irreps(self, output_keys=[], **kwargs):
@@ -25,10 +26,10 @@ class Module(torch.nn.Module):
             else: # value is None
                 continue 
             if key in output_keys:
-                self.irreps_out[key] = Irreps(irreps)
+                self.irreps_out[key] = irreps
                 self.output_key_mapping[key] = custom_key
             else:
-                self.irreps_in[key] = Irreps(irreps)
+                self.irreps_in[key] = irreps
                 self.input_key_mapping[custom_key] = key
 
     def inputKeyMap(self, input):
@@ -52,8 +53,14 @@ class SequentialGraphNetwork(torch.nn.Sequential):
             if isinstance(value, ConfigDict) or isinstance(value, dict):
                 module = build(value)
                 modules[key] = module
+                if 'jit' in config and config['jit']:
+                    module = (module, script(module))
+                else:
+                    modules[key] = module
                 self.layers += [(key, module)]
             elif callable(value):
+                if 'jit' in config and config['jit']:
+                    value = torch.jit.script(value)
                 self.layers += [(key, value)]
             else:
                 raise TypeError("invalid config node")
@@ -62,10 +69,24 @@ class SequentialGraphNetwork(torch.nn.Sequential):
         super().__init__(modules)
 
     def forward(self, batch):
+        batch.nodeSegment()
+        data, attrs = batch.data, batch.attrs
         for i, (key, module) in enumerate(self.layers):
             with record_function(key):
-                batch = module(batch)
-            assert isinstance(
-                batch, Data
-            ), f"The return of {module} is not an instance of Data"
-        return batch
+                _data, _attrs = data, attrs
+                jitted_forward = None
+                if isinstance(module, tuple):
+                    module, jitted_forward = module
+                if isinstance(module, Module):
+                    _data = module.inputKeyMap(_data)
+                    _attrs = module.inputKeyMap(_attrs)
+                if jitted_forward is None:
+                    _data, _attrs = module(_data, _attrs)
+                else:
+                    _data, _attrs = jitted_forward(_data, _attrs)
+                if isinstance(module, Module):
+                    _data = module.outputKeyMap(_data)
+                    _attrs = module.outputKeyMap(_attrs)
+                data.update(_data)
+                attrs.update(_attrs)
+        return Batch(attrs, **data)

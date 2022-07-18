@@ -88,14 +88,14 @@ def featureModel(
     node_features = Irreps(node_features)
     for layer_i in range(num_layers):
         cur = deepcopy(mp)
-        cur["input_features"][0] = cur_node_features
+        cur["input_features"][0] = str(cur_node_features)
         cur_node_features = [
             (mul, ir)
             for mul, ir in node_features
             if tp_path_exists(cur_node_features, edge_spherical, ir)
         ]
         cur_node_features = Irreps(cur_node_features)
-        cur["output_features"][0] = cur_node_features
+        cur["output_features"][0] = str(cur_node_features)
         layers[f"layer{layer_i}"] = cur
 
     config.layers = list(layers.items())

@@ -1,12 +1,10 @@
-from typing import List, Optional
-
 import torch
 from .sequential import Module
-
-RESCALE_THRESHOLD = 1e-6
+from torch import Tensor
+from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple, List
 
 import torch
-
 
 class PerTypeScaleShift(Module):
     def __init__(
@@ -51,19 +49,19 @@ class PerTypeScaleShift(Module):
                 self.scales = torch.nn.Parameter(scales)
             else:
                 self.register_buffer("scales", scales)
+        else:
+            self.scales = torch.ones(num_types)
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data
         species, input = input["species"], input["input"]
 
         if self.has_scales:
-            input = self.scales[species].view(-1, 1) * input
+            input = self.scales[species].view(-1, 1).to(input.device) * input
         if self.has_shifts:
-            input = self.shifts[species].view(-1, 1) + input
+            input = self.shifts[species].view(-1, 1).to(input.device) + input
 
-        is_per = self.inputKeyMap(data.attrs)["input"][0]
-        data.attrs.update(
-            self.outputKeyMap({"output": (is_per, self.irreps_out["output"])})
-        )
-        data.update(self.outputKeyMap({"output": input}))
-        return data
+        is_per = attrs["input"][0]
+        attrs = {"output": (is_per, self.irreps_out["output"])}
+        data = {"output": input}
+        return data, attrs

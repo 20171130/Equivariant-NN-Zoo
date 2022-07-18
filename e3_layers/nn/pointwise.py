@@ -6,6 +6,10 @@ from .sequential import Module
 from ..utils import activations
 from e3nn.nn import NormActivation
 
+from torch import Tensor
+from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple
+
 
 class PointwiseLinear(Module):
     def __init__(self, irreps_in, irreps_out, biases=True, **kwargs):
@@ -17,24 +21,13 @@ class PointwiseLinear(Module):
             biases=biases,
         )
 
-    def forward(self, data):
-        if isinstance(data, torch.Tensor):
-            input = data
-        else:
-            input = self.inputKeyMap(data)["input"]
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data["input"]
         output = self.linear(input)
 
-        if isinstance(data, torch.Tensor):
-            return output
-        else:
-            tmp = self.inputKeyMap(data.attrs)
-            data.attrs.update(
-                self.outputKeyMap(
-                    {"output": (tmp["input"][0], self.irreps_out["output"])}
-                )
-            )
-            data.update(self.outputKeyMap({"output": output}))
-            return data
+        attrs = {"output": (attrs["input"][0], self.irreps_out["output"])}
+        data = {"output": output}
+        return data, attrs
 
 
 class TensorProductExpansion(Module):
@@ -46,8 +39,8 @@ class TensorProductExpansion(Module):
 
         irreps_mid = []
         instructions = []
-        for i, (mul, left) in enumerate(self.irreps_in["left"]):
-            for j, (_, right) in enumerate(self.irreps_in["right"]):
+        for i, (mul, left) in enumerate(Irreps(self.irreps_in["left"])):
+            for j, (_, right) in enumerate(Irreps(self.irreps_in["right"])):
                 for ir_out in left * right:
                     if ir_out in self.irreps_out["output"]:
                         k = len(irreps_mid)
@@ -62,8 +55,8 @@ class TensorProductExpansion(Module):
         ]
 
         self.tp = TensorProduct(
-            self.irreps_in["left"],
-            self.irreps_in["right"],
+            Irreps(self.irreps_in["left"]),
+            Irreps(self.irreps_in["right"]),
             irreps_mid,
             instructions,
             shared_weights=internal_weight,
@@ -77,25 +70,13 @@ class TensorProductExpansion(Module):
             shared_weights=True,
         )
 
-    def forward(self, data=None, left=None, right=None, weight=None):
-        if left == None:
-            input = self.inputKeyMap(data)
-            left, right = input["left"], input["right"]
-            weight = input["weight"]
+    def forward(self, left=None, right=None, weight=None):
         if self.internal_weight:
             output = self.tp(left, right)
         else:
             output = self.tp(left, right, weight)
         output = self.linear(output)
-        if data == None:
-            return output
-        else:
-            is_per = self.inputKeyMap(data.attrs)["left"][0]
-            data.attrs.update(
-                self.outputKeyMap({"output": (is_per, self.irreps_out["output"])})
-            )
-            data.update(self.outputKeyMap({"output": output}))
-            return data
+        return output
 
 
 class ResBlock(Module):

@@ -6,6 +6,10 @@ import ase.neighborlist
 import ase
 from tqdm import tqdm, trange
 
+from torch import Tensor
+from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple
+
 
 def neighbor_list_and_relative_vec(
     pos,
@@ -120,7 +124,7 @@ def neighbor_list_and_relative_vec(
     return edge_index, shifts, cell_tensor
 
 
-def computeEdgeVector(data: Data, with_lengths: bool = True):
+def computeEdgeVector(data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]], with_lengths: bool = True):
     """Compute the edge displacement vectors for a graph.
 
     If ``data.pos.requires_grad`` and/or ``data.cell.requires_grad``, this
@@ -129,12 +133,13 @@ def computeEdgeVector(data: Data, with_lengths: bool = True):
     Returns:
         Tensor [n_edges, 3] edge displacement vectors
     """
-    data.attrs["edge_vector"] = ("edge", "1x1o")
-    data.attrs["edge_length"] = ("edge", "1x0e")
+    attrs:Dict[str, Tuple[str, str]] = {}
+    attrs["edge_vector"] = ("edge", "1x1o")
+    attrs["edge_length"] = ("edge", "1x0e")
     if "edge_vector" in data.keys():
         if with_lengths and "edge_length" not in data.keys():
             data["edge_length"] = torch.linalg.norm(data["edge_vector"], dim=-1)
-        return data
+        return data, attrs
     else:
         # Build it dynamically
         # Note that this is
@@ -171,7 +176,7 @@ def computeEdgeVector(data: Data, with_lengths: bool = True):
         data["edge_vector"] = edge_vec
         if with_lengths:
             data["edge_length"] = torch.linalg.norm(edge_vec, dim=-1)
-        return data
+        return data, attrs
 
 
 def computeEdgeIndex(
