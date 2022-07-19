@@ -7,7 +7,7 @@ from e3nn.o3 import Irreps
 from e3nn.nn import FullyConnectedNet
 from e3nn.o3 import Linear, FullyConnectedTensorProduct
 
-from .pointwise import TensorProductExpansion
+from .pointwise import TensorProductExpansion, LayerNormalization
 from .sequential import Module
 from ..utils import build, tp_path_exists, activations
 from e3nn.util.jit import compile_mode
@@ -136,6 +136,7 @@ class MessagePassing(Module, torch.nn.Module):
         nonlinearity_type: str = "gate",
         nonlinearity_scalars: Dict[int, Callable] = {"e": "ssp", "o": "tanh"},
         nonlinearity_gates: Dict[int, Callable] = {"e": "ssp", "o": "abs"},
+        normalize=True
     ):
         """Convolution with nonlinearity and residual connection"""
         super().__init__()
@@ -232,6 +233,9 @@ class MessagePassing(Module, torch.nn.Module):
             edge_radial=edge_radial,
             edge_spherical=edge_spherical,
         )
+        self.normalize = normalize
+        if normalize is True:   
+            self.norm = LayerNormalization(self.irreps_out["output_features"], self.irreps_out["output_features"])
 
     def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
         # save old features for resnet
@@ -245,6 +249,10 @@ class MessagePassing(Module, torch.nn.Module):
         #   output = output + self.tp(output, self.linear_tp(output))
         if self.resnet:
             output = old_x + output
+            
+        if self.normalize:
+            tmp = self.norm({'input':output}, attrs)[0]
+            output = tmp['output']
 
         is_per = attrs["input_features"][0]
         attrs = {"output_features": (is_per, self.irreps_out["output_features"])}

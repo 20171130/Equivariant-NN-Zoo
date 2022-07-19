@@ -28,6 +28,27 @@ class PointwiseLinear(Module):
         attrs = {"output": (attrs["input"][0], self.irreps_out["output"])}
         data = {"output": output}
         return data, attrs
+      
+class LayerNormalization(Module):
+    def __init__(self, irreps_in, irreps_out, **kwargs):
+        super().__init__()
+        self.init_irreps(input=irreps_in, output=irreps_out, output_keys=["output"])
+        assert irreps_in == irreps_out
+        self.muls = [irrep.mul for irrep in Irreps(irreps_in)]
+        self.slices = [(slice.start, slice.stop) for slice in Irreps(irreps_in).slices()]
+        self.std = torch.nn.Parameter(torch.ones(len(self.slices)))
+
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data["input"]
+        output = torch.zeros(input.shape).to(input.device)
+        for i, (start, end) in enumerate(self.slices):
+            tmp = input[:, start:end]
+            norm = (tmp*tmp).sum(dim=-1, keepdim=True)
+            norm = (norm/self.muls[i])**0.5
+            tmp = tmp/norm
+            output[:, start:end] = tmp * self.std[i]
+        data = {"output": output}
+        return data, attrs
 
 
 class TensorProductExpansion(Module):
