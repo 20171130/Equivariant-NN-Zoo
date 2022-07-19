@@ -23,12 +23,10 @@ from e3nn.util.jit import compile_mode
 from ml_collections.config_dict import ConfigDict
 from ..utils import build
 
-
-def symmetricCutoff(r_max, **kwargs):
-    def func(x):
-        x = x/r_max
-        return (x-1)**2 *(x+1)**2 *(abs(x)<1.).float()
-    return func
+@torch.jit.script
+def symmetricCutoff(x: torch.Tensor, factor: float, p: float = 6.0) -> torch.Tensor:
+    x = x * factor
+    return (x-1)**2 *(x+1)**2 *(abs(x)<1.).float()
 
 @torch.jit.script
 def _poly_cutoff(x: torch.Tensor, factor: float, p: float = 6.0) -> torch.Tensor:
@@ -46,7 +44,7 @@ class PolynomialCutoff(torch.nn.Module):
     _factor: float
     p: float
 
-    def __init__(self, r_max: float, p: float = 6):
+    def __init__(self, r_max: float, p: float = 6, cutoff=_poly_cutoff):
         r"""Polynomial cutoff, as proposed in DimeNet: https://arxiv.org/abs/2003.03123
 
 
@@ -62,6 +60,7 @@ class PolynomialCutoff(torch.nn.Module):
         assert p >= 2.0
         self.p = float(p)
         self._factor = 1.0 / float(r_max)
+        self.cutoff = cutoff
 
     def forward(self, x):
         """
@@ -69,7 +68,7 @@ class PolynomialCutoff(torch.nn.Module):
 
         x: torch.Tensor, input distance
         """
-        return _poly_cutoff(x, self._factor, p=self.p)
+        return self.cutoff(x, self._factor, p=self.p)
 
 
 class BesselBasis(nn.Module):
@@ -189,7 +188,7 @@ class RadialBasisEncoding(Module):
         r_min=0,
         polynomial_degree=6,
         basis=BesselBasis,
-        cutoff=PolynomialCutoff,
+        cutoff=_poly_cutoff,
         irreps_in="1x0e",
         one_over_r = True
     ):
@@ -205,7 +204,8 @@ class RadialBasisEncoding(Module):
         num_basis = Irreps(self.irreps_out["radial_embedding"])
         num_basis = num_basis[0].mul
         self.basis = basis(r_max, r_min, num_basis, trainable, one_over_r=one_over_r)
-        self.cutoff = cutoff(r_max, p=polynomial_degree)
+        self.cutoff = PolynomialCutoff(r_max, p=polynomial_degree, cutoff=cutoff)
+        self.r_max = r_max
         
     def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
         input = data['input']
@@ -239,28 +239,19 @@ class Broadcast(Module):
         self.to = to
 
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)
-        is_per = input.attrs['input'][0]
-        input = input['input']
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        is_per = attrs['input'][0]
+        input = data['input']
 
-        if is_per == 'graph':
-            if self.to == 'node':
-                output = input[data.nodeSegment()]
-            elif self.to == 'edge':
-                output = input[data.edgeSegment()]
-            else:
-                raise ValueError()
+        assert is_per == 'graph'
+        if self.to == 'node':
+            output = input[data['_node_segment']]
+        elif self.to == 'edge':
+            output = input[data['_edge_segment']]
         else:
-            raise UnimplementedError()
+            raise ValueError()
 
-        data.attrs.update(
-            self.outputKeyMap(
-                {"output": (self.to, self.irreps_out["output"])}
-            )
-        )
-        data.update(self.outputKeyMap({"output": output}))
-        return data
+        return {"output": output}, {"output": (self.to, self.irreps_out["output"])}
 
 
 @compile_mode("script")
@@ -305,18 +296,12 @@ class RelativePositionEncoding(Module):
         self.radial = radial_encoding
         
 
-    def forward(self, data):
-        segment = self.inputKeyMap(data)['input']
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        segment = data['input']
         relative_pos = data['edge_index'][0] - data['edge_index'][1]
         mask = segment[data['edge_index'][0]] == segment[data['edge_index'][1]]
         mask = mask.float()
         relative_pos = mask*relative_pos.view(-1, 1) + (1-mask)*1e5
-        output = self.radial(relative_pos)
+        output, attrs = self.radial({'input':relative_pos}, attrs)
 
-        data.attrs.update(
-            self.outputKeyMap(
-                {"output": ('edge', self.irreps_out["output"])}
-            )
-        )
-        data.update(self.outputKeyMap({"output": output}))
-        return data
+        return {'output':output['radial_embedding']}, {"output": ('edge', self.irreps_out["output"])}

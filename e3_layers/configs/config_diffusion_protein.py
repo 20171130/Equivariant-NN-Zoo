@@ -37,12 +37,13 @@ def get_config(spec=''):
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
     
-    model.n_dim = 32
+    model.n_dim = 48
     model.l_max = 2
     model.r_max = 5.0 
     model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
+    model.jit = True
     num_types = 23*2
 
     data.n_train = 0.9

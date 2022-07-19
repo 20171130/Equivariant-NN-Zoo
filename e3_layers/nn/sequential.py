@@ -45,11 +45,11 @@ class SequentialGraphNetwork(torch.nn.Sequential):
     """
 
     def __init__(self, **config):
-        layer_configs = OrderedDict(config["layers"])
+        layer_configs = config["layers"]
         self.layers = []
         self.layer_configs = layer_configs
         modules = {}
-        for i, (key, value) in enumerate(layer_configs.items()):
+        for i, (key, value) in enumerate(layer_configs):
             if isinstance(value, ConfigDict) or isinstance(value, dict):
                 module = build(value)
                 modules[key] = module
@@ -74,16 +74,14 @@ class SequentialGraphNetwork(torch.nn.Sequential):
         for i, (key, module) in enumerate(self.layers):
             with record_function(key):
                 _data, _attrs = data, attrs
-                jitted_forward = None
                 if isinstance(module, tuple):
-                    module, jitted_forward = module
+                    module, forward = module
+                else:
+                    forward = module
                 if isinstance(module, Module):
                     _data = module.inputKeyMap(_data)
                     _attrs = module.inputKeyMap(_attrs)
-                if jitted_forward is None:
-                    _data, _attrs = module(_data, _attrs)
-                else:
-                    _data, _attrs = jitted_forward(_data, _attrs)
+                _data, _attrs = forward(_data, _attrs)
                 if isinstance(module, Module):
                     _data = module.outputKeyMap(_data)
                     _attrs = module.outputKeyMap(_attrs)
