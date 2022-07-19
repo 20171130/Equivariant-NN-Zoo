@@ -59,8 +59,8 @@ class SequentialGraphNetwork(torch.nn.Sequential):
                     modules[key] = module
                 self.layers += [(key, module)]
             elif callable(value):
-                if 'jit' in config and config['jit']:
-                    value = torch.jit.script(value)
+              #  if 'jit' in config and config['jit']:
+             #   value = torch.jit.script(value)
                 self.layers += [(key, value)]
             else:
                 raise TypeError("invalid config node")

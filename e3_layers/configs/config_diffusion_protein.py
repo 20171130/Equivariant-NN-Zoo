@@ -14,6 +14,10 @@ def posMask(batch):
 def maskSpecies(batch):
     batch['species'] = batch['species']*0
     return batch
+def criteria(data, edge_index):
+    mask = (data['chain_id'][edge_index[0]] == data['chain_id'][edge_index[1]]).view(-1)
+    mask = torch.logical_and(mask, abs(edge_index[0]-edge_index[1])<15)
+    return mask
 
 def get_config(spec=''):
     config = ConfigDict()
@@ -37,7 +41,7 @@ def get_config(spec=''):
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
     
-    model.n_dim = 48
+    model.n_dim = 32
     model.l_max = 2
     model.r_max = 5.0 
     model.num_layers = 4
@@ -53,8 +57,6 @@ def get_config(spec=''):
     data.shuffle = True
     data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(7)]
     data.preprocess = []
-    if not 'gcn' in spec:
-        data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
     if 'sidechain_agnostic' in spec:
         data.preprocess.append(maskSpecies)
         
@@ -129,7 +131,7 @@ def get_config(spec=''):
             },
         )
     )
-    # the gradients are in fact -score, sign will be reversed in score_fn
+    layer_configs.layers = [('edge_index', partial(computeEdgeIndex, r_max=8.0/data.std, criteria=criteria))] + layer_configs.layers
     model.update(layer_configs)
 
     return config

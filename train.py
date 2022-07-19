@@ -20,7 +20,7 @@ import wandb
 
 from e3_layers.utils import build, pruneArgs, _countParameters, save_checkpoint, restore_checkpoint
 from e3_layers import configs
-from e3_layers.data import Batch, computeEdgeVector, getDataIters, CondensedDataset
+from e3_layers.data import Batch, getDataIters, CondensedDataset
 
 config_flags.DEFINE_config_file(
   "sde_config", None, "Training sde_configuration.", lock_config=True)
@@ -219,22 +219,8 @@ def train_diffusion(e3_config, FLAGS):
         lst = [batch[0] for i in range(n_samples)]
         batch = Batch.from_data_list(lst, batch.attrs)
         samples_batch, n = sampling_fn(score_model, batch)
-        samples = [samples_batch[i] for i in range(len(samples_batch))]
-        
-        batch = computeEdgeVector(batch)
-        min_loss = 9999
-        argmin = 0
-        sum_loss = 0
-        for i, sample in enumerate(samples):
-          loss = (batch[0]['edge_length'] - sample['edge_length'])**2
-          loss = loss.mean().item()
-          sum_loss += loss
-          if loss < min_loss:
-            min_loss = loss
-            argmin = i
-
-        filename = f'{step}_{sum_loss/n_samples}'
-        filenmae = saveMol(samples_batch, idx=i, workdir=FLAGS.workdir, filename=filename)
+        filename = f'{step}'
+        filenmae = saveMol(samples_batch, idx=0, workdir=FLAGS.workdir, filename=filename)
         wandb.log({'sample': wandb.Molecule(filenmae), 'optim_step' : step})
 
 
