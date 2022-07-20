@@ -41,10 +41,10 @@ def get_config(spec=''):
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
     
-    model.n_dim = 64
+    model.n_dim = 32
     model.l_max = 2
     model.r_max = 5.0 
-    model.num_layers = 8
+    model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
     model.jit = True
@@ -79,7 +79,7 @@ def get_config(spec=''):
         num_layers=model.num_layers,
         r_max=model.r_max,
         avg_num_neighbors=100,
-        remat=False
+        normalize=True
     )
     
     relative_position = {

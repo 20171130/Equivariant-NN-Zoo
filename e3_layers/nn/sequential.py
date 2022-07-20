@@ -69,7 +69,6 @@ class SequentialGraphNetwork(torch.nn.Sequential):
         super().__init__(modules)
 
     def forward(self, batch):
-        batch.nodeSegment()
         data, attrs = batch.data, batch.attrs
         for i, (key, module) in enumerate(self.layers):
             with record_function(key):

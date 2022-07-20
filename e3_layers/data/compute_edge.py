@@ -77,12 +77,15 @@ def computeEdgeIndex(
     
     mask = mask.expand((2, -1))
     edge_index = edge_index[mask].reshape(2, -1)
-    n_edges = torch.bincount(data['_node_segment'][edge_index[0]]).view(-1, 1)
-
+    
+    if '_node_segment' in data:
+        n_edges = torch.bincount(data['_node_segment'][edge_index[0]]).view(-1, 1)
+    else:
+        n_edges = torch.ones((1,), dtype=torch.long) * edge_index.shape[1]
     attrs["_n_edges"] = ('graph', '1x0e')
-
+    data["_n_edges"] = n_edges
+    
     data = {}
     data["edge_index"] = edge_index
-    data["_n_edges"] = n_edges
-
+    
     return data, attrs

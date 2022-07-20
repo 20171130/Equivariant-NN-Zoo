@@ -17,7 +17,7 @@ def featureModel(
     node_attrs,
     edge_spherical=None,
     avg_num_neighbors=10,
-    remat=False
+    normalize=False
 ):
     config = ConfigDict()
 
@@ -82,8 +82,8 @@ def featureModel(
         "nonlinearity_gates": {"e": "silu", "o": "tanhlu"},
         **irreps,
     }
-    if remat:
-        mp['remat'] = True
+    if normalize:
+        mp['normalize'] = True
     cur_node_features = Irreps(f"{n_dim}x0e")
     node_features = Irreps(node_features)
     for layer_i in range(num_layers):

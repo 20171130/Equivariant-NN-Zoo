@@ -18,6 +18,7 @@ import os
 import re
 import logging
 
+from inspect import signature
 
 class CondensedDataset(Batch):
     """
@@ -107,7 +108,14 @@ class CondensedDataset(Batch):
         elif isinstance(idx, (int, np.integer)):
             data = self.get(idx)
             for func in self.preprocess:
-                data = func(data)
+                sig = signature(func)
+                if len(sig.parameters) == 1:
+                    data = func(data)
+                else:
+                    tensors, attrs = data.data, data.attrs
+                    tensors, attrs = func(tensors, attrs)
+                    data.data.update(tensors)
+                    data.attrs.update(attrs)
             return data
         else:
             dataset = self.index_select(idx)

@@ -18,6 +18,10 @@ class Batch(Data):
         Call from_data_list if initializing from a list of data dicts.
         """
         super().__init__(attrs, **tensors)
+        if '_n_nodes' in self.data:
+            self.nodeSegment()
+        if '_n_edges' in self.data:
+            self.edgeSegment()
 
     def computeCumsums(self):
         if "_n_nodes" in self.data and (not hasattr(self, 'node_cumsum')):

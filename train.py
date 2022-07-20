@@ -36,7 +36,7 @@ flags.DEFINE_boolean("profiling", False, "If profiling.")
 flags.DEFINE_boolean("equivariance_test", False, "If performs equivariance test.")
 
 flags.DEFINE_boolean("wandb", False, "If logging with wandb.")
-flags.DEFINE_string("wandb_project", None, "The name of the wandb project.")
+flags.DEFINE_string("project", 'default_project', "The name of the project.")
 flags.DEFINE_string("verbose", "INFO", "Logging verbosity.")
 flags.DEFINE_integer("log_period", 100, "Number of training batches.")
 flags.DEFINE_integer("eval_period", 20, "")
@@ -234,8 +234,7 @@ def main(rank):
   os.environ["MASTER_ADDR"] = FLAGS.master_addr
   os.environ["MASTER_PORT"] = FLAGS.master_port
 
-  # Create the working directory
-  Path(FLAGS.workdir).mkdir(exist_ok=True)
+  FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.project, FLAGS.name)
   config_name = FLAGS.config
   e3_config = getattr(configs, config_name, None)
   assert not e3_config is None, f"Config {config_name} not found."
@@ -247,16 +246,18 @@ def main(rank):
   handler.setFormatter(formatter)
   logger.addHandler(handler)
   if rank == 0:
-      # Set logger so that it outputs to both console and file
-      # Make logging work for both disk and Google Cloud Storage
-      gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
-      handler = logging.StreamHandler(gfile_stream)
-      handler.setFormatter(formatter)
-      logger.addHandler(handler)
-      logger.setLevel(getattr(logging, FLAGS.verbose))
-      # Run the training pipeline
+    # Create the working directory
+    Path(FLAGS.workdir).mkdir(exist_ok=True, parents=True)
+    # Set logger so that it outputs to both console and file
+    # Make logging work for both disk and Google Cloud Storage
+    gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
+    handler = logging.StreamHandler(gfile_stream)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(getattr(logging, FLAGS.verbose))
+    # Run the training pipeline
   else:
-      logger.setLevel(logging.WARNING)
+    logger.setLevel(logging.WARNING)
       
   if FLAGS.sde_config is None:
     config_dict = e3_config.to_dict()
@@ -267,7 +268,7 @@ def main(rank):
   else:
     mode = 'disabled'
   wandb.init(
-      project=FLAGS.wandb_project,
+      project=FLAGS.project,
       config=config_dict,
       mode = mode,
       name=f"{FLAGS.name}_{FLAGS.seed}",
@@ -291,10 +292,10 @@ def launch_mp():
   FLAGS = flags.FLAGS
   FLAGS(sys.argv)
   mp.set_start_method("spawn")
-  FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
-  if not FLAGS.resume_from and os.path.isdir(FLAGS.workdir):
+  workdir = os.path.join(FLAGS.workdir, FLAGS.project, FLAGS.name)
+  if not FLAGS.resume_from and os.path.isdir(workdir):
     if input('Workdir exists, continune and overwrite? (y/n)') in ("Y", "y"):
-      rmtree(FLAGS.workdir)
+      rmtree(workdir)
     else:
       exit()
   if FLAGS.world_size == 1:
