@@ -21,10 +21,10 @@ def get_config(spec=None):
     config.use_ema = True
     config.ema_decay = 0.99
     config.ema_use_num_updates = True
-    config.metric_key = "training_loss"  # saves the best model according to this
+    config.metric_key = "validation_loss"  # saves the best model according to this
 
     config.max_epochs = int(1e6)
-    config.early_stopping_patiences = {"training_loss": 20}
+    config.early_stopping_patiences = {"validation_loss": 20}
     config.early_stopping_lower_bounds = {"LR": 1e-6}
 
     config.loss_coeffs = {"energy": [1e3, "MSELoss"], "forces": [3e4, "MSELoss"]}

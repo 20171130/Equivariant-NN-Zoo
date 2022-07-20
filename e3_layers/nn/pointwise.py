@@ -44,7 +44,7 @@ class LayerNormalization(Module):
         for i, (start, end) in enumerate(self.slices):
             tmp = input[:, start:end]
             norm = (tmp*tmp).sum(dim=-1, keepdim=True)
-            norm = (norm/self.muls[i])**0.5
+            norm = (norm/self.muls[i] + 1e-6)**0.5 
             tmp = tmp/norm
             output[:, start:end] = tmp * self.std[i]
         data = {"output": output}
