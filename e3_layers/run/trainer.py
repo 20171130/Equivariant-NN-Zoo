@@ -356,9 +356,6 @@ class Trainer:
                     self.logger.warning(f"equivariance test failed for {key}")
 
     def batch_step(self, data, validation=False):
-        # no need to have gradients from old steps taking up memory
-        self.optim.zero_grad(set_to_none=True)
-
         if validation:
             self.model.eval()
         else:
@@ -376,7 +373,6 @@ class Trainer:
             # see https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#use-parameter-grad-none-instead-of-model-zero-grad-or-optimizer-zero-grad
             self.optim.zero_grad(set_to_none=True)
             loss.backward()
-
             # See https://stackoverflow.com/a/56069467
             # Has to happen after .backward() so there are grads to clip
             if self.max_gradient_norm < float("inf"):
