@@ -136,7 +136,7 @@ class MessagePassing(Module, torch.nn.Module):
         nonlinearity_type: str = "gate",
         nonlinearity_scalars: Dict[int, Callable] = {"e": "ssp", "o": "tanh"},
         nonlinearity_gates: Dict[int, Callable] = {"e": "ssp", "o": "abs"},
-        normalize=True
+        normalize=False
     ):
         """Convolution with nonlinearity and residual connection"""
         super().__init__()
@@ -234,8 +234,7 @@ class MessagePassing(Module, torch.nn.Module):
             edge_spherical=edge_spherical,
         )
         self.normalize = normalize
-        if normalize is True:   
-            self.norm = LayerNormalization(self.irreps_out["output_features"], self.irreps_out["output_features"])
+        self.norm = LayerNormalization(self.irreps_out["output_features"], self.irreps_out["output_features"])
 
     def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
         # save old features for resnet

@@ -80,10 +80,9 @@ def featureModel(
         "nonlinearity_type": "gate",
         "nonlinearity_scalars": {"e": "silu", "o": "tanhlu"},
         "nonlinearity_gates": {"e": "silu", "o": "tanhlu"},
+        "normalize": normalize,
         **irreps,
     }
-    if normalize:
-        mp['normalize'] = True
     cur_node_features = Irreps(f"{n_dim}x0e")
     node_features = Irreps(node_features)
     for layer_i in range(num_layers):

@@ -60,7 +60,7 @@ def get_config(spec=None):
         num_types=num_types,
         num_layers=model.num_layers,
         r_max=model.r_max,
-        normalize=True
+        normalize=False
     )
     shifts = [
         -620.4502,
