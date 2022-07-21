@@ -54,7 +54,7 @@ class Trainer:
         loss_coeffs: Union[dict, str] = None,
         train_on_keys: Optional[List[str]] = None,
         metrics_components: Optional[Union[dict, str]] = None,
-        metrics_key="validation_loss",
+        metric_key="validation_loss",
         early_stopping_conds: Optional[EarlyStopping] = None,
         max_epochs: int = 1000000,
         learning_rate: float = 1e-2,
@@ -219,11 +219,11 @@ class Trainer:
         )
 
         if not (
-            self.metrics_key.lower().startswith("validation")
-            or self.metrics_key.lower().startswith("training")
+            self.metric_key.lower().startswith("validation")
+            or self.metric_key.lower().startswith("training")
         ):
             raise RuntimeError(
-                f"metrics_key should start with either {'validation'} or {'training'}"
+                f"metric_key should start with either {'validation'} or {'training'}"
             )
 
     def set_dataset(self, dataset, validation_dataset) -> None:
@@ -494,7 +494,7 @@ class Trainer:
             self.end_of_epoch_log()
 
             if self.lr_scheduler_name == "ReduceLROnPlateau":
-                self.lr_sched.step(metrics=self.mae_dict[self.metrics_key])
+                self.lr_sched.step(metrics=self.mae_dict[self.metric_key])
         self.iepoch += 1
         
         data_config = self.data_config
@@ -688,7 +688,7 @@ class Trainer:
         if self.rank > 0:
             return
         with atomic_write_group():
-            current_metrics = self.mae_dict[self.metrics_key]
+            current_metrics = self.mae_dict[self.metric_key]
             if current_metrics < self.best_metrics:
                 self.best_metrics = current_metrics
                 self.best_epoch = self.iepoch

@@ -17,6 +17,9 @@ def maskSpecies(batch):
 def criteria(data, edge_index):
     mask = (data['chain_id'][edge_index[0]] == data['chain_id'][edge_index[1]]).view(-1)
     mask = torch.logical_and(mask, abs(edge_index[0]-edge_index[1])<5)
+    
+    tmp = torch.rand((edge_index.shape[1],)).to(mask.device)
+    mask = torch.logical_or(mask, tmp<0.03)
     return mask
 
 def get_config(spec=''):
@@ -41,12 +44,12 @@ def get_config(spec=''):
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
     
-    model.n_dim = 32
+    model.n_dim = 64
     model.l_max = 2
     model.r_max = 5.0 
-    model.num_layers = 4
-    model.edge_radial = '8x0e'
-    model.node_attrs = "16x0e"
+    model.num_layers = 8
+    model.edge_radial = '32x0e'
+    model.node_attrs = "32x0e"
     model.jit = True
     num_types = 23*2
 
@@ -84,7 +87,7 @@ def get_config(spec=''):
     
     relative_position = {
         "module": RadialBasisEncoding,
-        "r_max": 5,
+        "r_max": 150,
         "cutoff": symmetricCutoff,
         "trainable": True,
         'one_over_r': False,
