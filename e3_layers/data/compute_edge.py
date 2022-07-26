@@ -48,40 +48,59 @@ def computeEdgeIndex(
     """
 
     pos = data["pos"]
-    pos = torch.as_tensor(pos, dtype=torch.get_default_dtype())
-
-    lst = []
-    n_edges = []
-    cnt = 0
-    old_edge_index = None
-    if 'edge_index' in data:
-        old_edge_index = data['edge_index']
+    pos = torch.as_tensor(pos, dtype=torch.get_default_dtype())        
     
+    # per graph fully connected
     edge_index_lst = []
-    n_edges = []
     cnt = 0
     for n_nodes in data['_n_nodes']:
         edge_matrix = torch.zeros((n_nodes, n_nodes), dtype=torch.long)
         edge_matrix += torch.tensor(range(cnt, cnt+n_nodes))
-        edge_index = torch.stack([edge_matrix.reshape(-1), edge_matrix.permute(1, 0).reshape(-1)])
+        edge_index = torch.stack([edge_matrix.permute(1, 0).reshape(-1), edge_matrix.reshape(-1)])
         edge_index_lst.append(edge_index)
         cnt += n_nodes
     edge_index = torch.cat(edge_index_lst, dim=1).to(pos.device)
+    
+    # filter edges according to distance
     distance = pos[edge_index[0]] - pos[edge_index[1]]
     distance = torch.linalg.norm(distance, dim=-1)
     mask =  distance < r_max
-
+    
+    # filter edges according to custom criteria
     if not criteria is None:
         mask = torch.logical_or(mask, criteria(data, edge_index))
     mask = torch.logical_and(mask, torch.logical_not(edge_index[0]==edge_index[1]))
-    
+
+    def computeEdgeMap(a, b):
+        j = 0
+        lst = []
+        for i in range(a.shape[1]):
+            while not (b[:, j] == a[:, i]).all():
+                j += 1
+            lst.append(j)
+        return torch.tensor(lst)
+      
+    if 'edge_index' in data:
+        edge_map = computeEdgeMap(data['edge_index'], edge_index)
+        mask[edge_map] = True
+        
     mask = mask.expand((2, -1))
     edge_index = edge_index[mask].reshape(2, -1)
     
+    # map edge attributes to new edge indices
+    if 'edge_index' in data:
+        edge_map = computeEdgeMap(data['edge_index'], edge_index)
+        for key in attrs:
+            if attrs[key][0] == 'edge': 
+                tmp = data[key]
+                data[key] = torch.zeros(edge_index.shape[1], data[key].shape[1], dtype=data[key].dtype).to(pos.device)
+                data[key][edge_map] = tmp
+                    
     if '_node_segment' in data:
         n_edges = torch.bincount(data['_node_segment'][edge_index[0]]).view(-1, 1)
     else:
         n_edges = torch.ones((1,), dtype=torch.long) * edge_index.shape[1]
+
     attrs["_n_edges"] = ('graph', '1x0e')
     data["_n_edges"] = n_edges
     

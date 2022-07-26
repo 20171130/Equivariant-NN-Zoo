@@ -849,6 +849,10 @@ class Trainer:
                 f"The previous run has properly stopped with {stop_arg}."
                 "Please either increase the max_epoch or change early stop criteria"
             )
+            
+        if 'learning_rate' in kwargs and not kwargs['learning_rate'] is None:
+            for g in trainer.optim.param_groups:
+                g['lr'] = kwargs['learning_rate']
 
         return trainer
 

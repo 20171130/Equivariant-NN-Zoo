@@ -34,8 +34,8 @@ def get_config(spec=None):
     model.n_dim = 64
     model.l_max = 3
     model.r_max = 4.0
-    model.num_layers = 4
-    model.node_attrs = "16x0e"
+    model.num_layers = 5
+    model.node_attrs = "20x0e"
     model.jit = True
     num_types = 10
 
@@ -45,7 +45,7 @@ def get_config(spec=None):
     data.shuffle = True
     data.path = "/opt/shared-data/qm9.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.key_map = {"Z": "species", "R": "pos", "U": "total_energy"}
+    data.key_map = {"Z": "species", "R": "pos", "U0": "total_energy"}
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
 
     "+".join([f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)])
