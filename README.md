@@ -83,10 +83,10 @@ You may set up `data.std` in the config file to scale the input by `1/data.std`,
 Run
 ```
 # small organic molecules
- python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --config config_diffusion    --name test   --project diffusion --wandb
+ python3 train.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --config config_diffusion    --name test   --project diffusion --wandb
  
 # protein
- python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --config config_diffusion_protein   --project diffusion_protein  --seed 0 --name test --wandb
+ python3 train.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --config config_diffusion_protein   --project diffusion_protein  --seed 0 --name test --wandb
  
 ```
 The script assumes there is a tensor named `pos` and reserves the key `t` for time and `species` for molecule/atom/residual type.

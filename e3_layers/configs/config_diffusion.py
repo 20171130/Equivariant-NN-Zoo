@@ -31,22 +31,23 @@ def get_config(spec=''):
 
     model.n_dim = 32
     model.l_max = 2
-    model.r_max = 5.0 
     model.num_layers = 4
     model.edge_radial = '8x0e'
     model.node_attrs = "16x0e"
+    model.r_max = 8.0
+    model.jit = True
     num_types = 18
 
     data.n_train = 120000
     data.n_val = 10831
-    data.std = 1.4 # such that the variance of pos is roughly 3
+    data.std = 1.4 
+    data.r_max = model.r_max/ data.std
     data.train_val_split = "random"
     data.shuffle = True
     data.path = "qm9_edge.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    if not 'gcn' in spec:
-        data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
     data.key_map = {"Z": "species", "R": "pos", "U": "total_energy", "edge_attr": "bond_type"}
+    data.preprocess = [partial(computeEdgeIndex, r_max=9999)]
     
     if spec and 'profiling' in spec:
         data.n_train = 2048
@@ -65,16 +66,16 @@ def get_config(spec=''):
         edge_radial=model.edge_radial,
         num_types=num_types,
         num_layers=model.num_layers,
-        r_max=model.r_max,
+        r_max=model.r_max/data.std,
     )
     
     
     bond_onehot = ('bond_onehot', {'module': OneHotEncoding,
               'num_types': 4,
               'irreps_in':('1x0e', "bond_type"),
-              'irreps_out':('4x0e', "bonde_type_onehot")})
+              'irreps_out':('4x0e', "bond_type_onehot")})
     concat = ('concat1', {'module': Concat,
-              'bondtype':('4x0e', "bonde_type_onehot"),
+              'bondtype':('4x0e', "bond_type_onehot"),
               'edge_radial':(model.edge_radial, "edge_radial"),
               'irreps_out' : (model.edge_radial, "edge_radial")})
     layer_configs.layers = insertAfter(layer_configs.layers, 'radial_basis', bond_onehot)
@@ -84,12 +85,11 @@ def get_config(spec=''):
         "module": RadialBasisEncoding,
         "r_max": 1.0,
         "trainable": True,
-        "polynomial_degree": 6,
-        "real": ("1x0e", "t"),
+        "irreps_in": ("1x0e", "t"),
         'one_over_r': False,
         "irreps_out": (f"{model.n_dim}x0e", "time_encoding"),
     })
-    layer_configs.layers = insertAfter(layer_configs.layers, 'node_features', time_encoding)
+    layer_configs.layers = insertAfter(layer_configs.layers, 'embedding', time_encoding)
     graph2node = ('graph2node', {'module': Broadcast, 
                                  'irreps_in': (f"{model.n_dim}x0e", "time_encoding"),
                                  'irreps_out': (f"{model.n_dim}x0e", "time_encoding"),
@@ -118,5 +118,4 @@ def get_config(spec=''):
         )
     # the gradients are in fact -score, sign will be reversed in score_fn
     model.update(layer_configs)
-
     return config

@@ -43,7 +43,7 @@ def featureModel(
     layers.update(embedCategorial(num_types, ('1x0e', 'species'), (node_attrs, 'node_attrs')))
     layers['node_features'] = {
         "module": PointwiseLinear,
-        "irreps_in": (f"{num_types}x0e", "onehot"),
+        "irreps_in": (f'{num_types}x0e', "onehot"),
         "irreps_out": (f'{n_dim}x0e', "node_features"),
     }
     layers["spharm_edges"] = {

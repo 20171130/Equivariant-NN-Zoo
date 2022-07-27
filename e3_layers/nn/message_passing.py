@@ -15,6 +15,7 @@ from e3nn.util.jit import compile_mode
 from torch import Tensor
 from e3nn.util.jit import compile_mode
 from typing import Optional, Dict, Tuple, Callable
+from typing_extensions import Final
 
 @compile_mode("script")
 class FactorizedConvolution(Module, torch.nn.Module):
@@ -124,6 +125,7 @@ class FactorizedConvolution(Module, torch.nn.Module):
 
 @compile_mode("script")
 class MessagePassing(Module, torch.nn.Module):
+    normalize: Final[bool]
     def __init__(
         self,
         input_features,
@@ -234,7 +236,8 @@ class MessagePassing(Module, torch.nn.Module):
             edge_spherical=edge_spherical,
         )
         self.normalize = normalize
-        self.norm = LayerNormalization(self.irreps_out["output_features"], self.irreps_out["output_features"])
+        if self.normalize:
+            self.norm = LayerNormalization(self.irreps_out["output_features"], self.irreps_out["output_features"])
 
     def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
         # save old features for resnet
