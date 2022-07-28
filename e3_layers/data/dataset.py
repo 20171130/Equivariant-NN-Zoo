@@ -106,7 +106,7 @@ class CondensedDataset(Batch):
         if isinstance(idx, str):
             return self.data[idx]
         elif isinstance(idx, (int, np.integer)):
-            data = self.get(idx)
+            data = self.get(idx).clone()
             for func in self.preprocess:
                 sig = signature(func)
                 if len(sig.parameters) == 1:

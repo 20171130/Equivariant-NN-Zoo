@@ -85,7 +85,11 @@ def saveProtein(batch, workdir, idx=0, filename='tmp'):
             j[4] = 'A'
             j[4] = j[4].rjust(1) #Astring
             
-            j[5] = f'{i+1}'
+            if 'id' in batch:
+                tmp = batch[idx]['id'][i].item()
+                j[5] = f"{tmp}"
+            else:
+                j[5] = f'{i+1}'
             j[5] = j[5].rjust(4) #resnum
             
             x, y, z = batch[idx]['pos'][i]

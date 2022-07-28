@@ -1,25 +1,64 @@
 from functools import partial
-from ..data import computeEdgeIndex
+from ..data import computeEdgeIndex, Batch
 from ml_collections.config_dict import ConfigDict
 import ase
 from .layer_configs import featureModel, addForceOutput, addEnergyOutput
 from ..nn import PointwiseLinear, RadialBasisEncoding, Broadcast, RelativePositionEncoding, Concat, symmetricCutoff
 from ..utils import insertAfter, saveProtein
 import torch
+import numpy as np
 
-def posMask(batch):
-    batch['pos'] = batch['pos'] + batch['pos_mask']*torch.randn(batch['pos'].shape) # a cluster at the center
-    batch['species'] = batch['species'] + batch['pos_mask']*23
-    return batch
-def maskSpecies(batch):
-    batch['species'] = batch['species']*0
-    return batch
+def masked2indexed(batch):
+    data = {}
+    id = torch.arange(start=0, end=batch['_n_nodes'].item())
+    mask = batch['mask'].view(-1).bool()
+    data['id'] = id[mask]
+    data['_n_nodes'] = sum(mask).view(-1, 1)
+    data['species'] = batch['species'][mask]
+    data['chain_id'] = batch['chain_id'][mask]
+    data['pos'] = batch['CA'][mask]
+
+    attrs = {'pos': ('node', '1x1o'), 'id': ('node', '1x0e')}
+    attrs.update(batch.attrs)
+    for atom in ['N', 'CA', 'C', 'CB', 'O']:
+        attrs.pop(atom)
+    return Batch(attrs, **data)
+
+def crop(data, attrs, max_nodes):
+    if data['_n_nodes'] <= max_nodes:
+        return data, attrs
+    x = np.random.randint(data['_n_nodes'])
+    distance = data['pos'] - data['pos'][x]
+    distance = torch.linalg.norm(distance, dim=-1)
+    
+    def binarySearch(r_min, r_max):
+        if r_max - r_min < 0.5:
+            return r_min
+        mask = distance < (r_min+r_max)/2
+        if sum(mask) > max_nodes:
+            return binarySearch(r_min, (r_min+r_max)/2)
+        elif sum(mask) < max_nodes:
+            return binarySearch((r_min+r_max)/2, r_max)
+        else:
+            return (r_min+r_max)/2
+    
+    r = binarySearch(20, 70)
+    mask = distance < r
+    mask = mask.view(-1).bool()
+    data['_n_nodes'] = sum(mask).view(-1, 1)
+    
+    data['id'] = data['id'][mask]
+    data['species'] = data['species'][mask]
+    data['chain_id'] = data['chain_id'][mask]
+    data['pos'] = data['pos'][mask]
+    return data, attrs
+  
 def criteria(data, edge_index):
     mask = (data['chain_id'][edge_index[0]] == data['chain_id'][edge_index[1]]).view(-1)
     mask = torch.logical_and(mask, abs(edge_index[0]-edge_index[1])<5)
     
     tmp = torch.rand((edge_index.shape[1],)).to(mask.device)
-    mask = torch.logical_or(mask, tmp<0.03)
+    mask = torch.logical_or(mask, tmp<0.02)
     return mask
 
 def get_config(spec=''):
@@ -51,21 +90,16 @@ def get_config(spec=''):
     model.edge_radial = '32x0e'
     model.node_attrs = "32x0e"
     model.jit = True
-    num_types = 23*2
+    num_types = 21
 
     data.n_train = 0.9
     data.n_val = 0.1
     data.std = 25.83
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = [f'/mnt/vepfs/hb/protein_small/{i}' for i in range(7)]
-    data.preprocess = []
-    if 'sidechain_agnostic' in spec:
-        data.preprocess.append(maskSpecies)
-        
-    data.preprocess.append(posMask)
-    
-    data.key_map = {"aa_type": "species", "R": "pos"}
+    data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(7)]
+    data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
+    data.key_map = {}
 
     features = "+".join(
         [f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)]
@@ -94,6 +128,7 @@ def get_config(spec=''):
     }
     relative_position = ('relative_position', {'module': RelativePositionEncoding,
                                               'segment': ('1x0e', 'chain_id'),
+                                               'id': ('1x0e', 'id'),
                                               'irreps_out':  (model.edge_radial, "rel_pos_embed"),
                                               'radial_encoding': relative_position})
     concat = ('concat1', {'module': Concat,

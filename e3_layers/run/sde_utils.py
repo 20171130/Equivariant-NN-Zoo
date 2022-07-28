@@ -111,20 +111,10 @@ def getScaler(scale):
     device = pos.device
     node_segment = batch.nodeSegment().to(device)
     n_nodes = batch['_n_nodes'].view(-1, 1)
-    if 'pos_mask' in batch:
-      pos_mask = (batch['pos_mask']==0).view(-1)
-      node_segment = node_segment[pos_mask]
-      n_nodes = torch.bincount(node_segment).view(-1, 1)
-      pos_mask = torch.cat([pos_mask.view(-1, 1)]*3, dim=1)
-      pos = pos[pos_mask].view(-1, 3)
-
     center = scatter(pos, node_segment, dim=0, reduce='sum')
     center = center/n_nodes
     pos = pos - center[node_segment]
-    if 'pos_mask' in batch:
-      batch['pos'][pos_mask] = (pos*scale).view(-1)
-    else:
-      batch['pos'] = pos*scale
+    batch['pos'] = pos*scale
     return batch
   return scaler
 

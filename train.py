@@ -211,7 +211,6 @@ def train_diffusion(e3_config, FLAGS):
         sample_dir = os.path.join(workdir, "samples")
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         Path(this_sample_dir).mkdir(parents=True, exist_ok=True)
-        
         filenmae = saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth')
         wandb.log({'ground_truth': wandb.Molecule(filenmae), 'optim_step' : step})
 

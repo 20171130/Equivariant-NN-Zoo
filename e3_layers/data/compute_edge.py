@@ -54,8 +54,9 @@ def computeEdgeIndex(
     edge_index_lst = []
     cnt = 0
     for n_nodes in data['_n_nodes']:
+        n_nodes = n_nodes.item()
         edge_matrix = torch.zeros((n_nodes, n_nodes), dtype=torch.long)
-        edge_matrix += torch.tensor(range(cnt, cnt+n_nodes))
+        edge_matrix += torch.arange(cnt, cnt+n_nodes)
         edge_index = torch.stack([edge_matrix.permute(1, 0).reshape(-1), edge_matrix.reshape(-1)])
         edge_index_lst.append(edge_index)
         cnt += n_nodes

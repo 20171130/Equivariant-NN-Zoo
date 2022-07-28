@@ -286,10 +286,11 @@ class RelativePositionEncoding(Module):
         self,
         radial_encoding,
         segment,
-        irreps_out
+        irreps_out,
+        id = None
     ):
         super().__init__()
-        self.init_irreps(input=segment, output=irreps_out, output_keys=['output'])
+        self.init_irreps(input=segment, output=irreps_out, id=id, output_keys=['output'])
         radial_encoding['irreps_in'] = '1x0e'
         radial_encoding['irreps_out'] = self.irreps_out['output']
         radial_encoding = build(radial_encoding)
@@ -298,7 +299,11 @@ class RelativePositionEncoding(Module):
 
     def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
         segment = data['input']
-        relative_pos = data['edge_index'][0] - data['edge_index'][1]
+        if 'id' in self.irreps_in and not self.irreps_in['id'] is None:
+            id = data['id']
+            relative_pos = id[data['edge_index'][0]] - id[data['edge_index'][1]]
+        else:
+            relative_pos = data['edge_index'][0] - data['edge_index'][1]
         mask = segment[data['edge_index'][0]] == segment[data['edge_index'][1]]
         mask = mask.float()
         relative_pos = mask*relative_pos.view(-1, 1) + (1-mask)*1e5

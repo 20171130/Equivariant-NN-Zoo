@@ -91,7 +91,8 @@ for key in pbar:
     
 path = os.path.join(OUTPUT, f'pdb_{SPLIT}.hdf5')
 attrs = {}
-attrs['pos'] = ('node', '1x1o')
+for atom in ['N', 'CA', 'C', 'CB', 'O']:
+    attrs[atom] = ('node', '1x1o')
 attrs['mask'] = ('node', '1x0e')
 attrs['species'] = ('node', '1x0e')
 attrs['edge_attr'] = ('edge', '1x0e')
