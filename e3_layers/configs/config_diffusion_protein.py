@@ -67,7 +67,7 @@ def get_config(spec=''):
     config.data_config = data
     config.model_config = model
 
-    config.learning_rate = 1e-2
+    config.learning_rate = 8e-3
     config.batch_size = 4
     config.grad_acc = 4
     
@@ -85,7 +85,7 @@ def get_config(spec=''):
     
     model.n_dim = 64
     model.l_max = 2
-    model.r_max = 5.0 
+    model.r_max = 5.0 # this does not control the number of edges 
     model.num_layers = 8
     model.edge_radial = '32x0e'
     model.node_attrs = "32x0e"
@@ -97,7 +97,7 @@ def get_config(spec=''):
     data.std = 25.83
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(7)]
+    data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
     data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
     data.key_map = {}
 

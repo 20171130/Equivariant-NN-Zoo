@@ -179,7 +179,7 @@ def train_diffusion(e3_config, FLAGS):
 
     # Save a temporary checkpoint to resume training after pre-emption periodically
     if step != 0 and step % FLAGS.save_period == 0 and dist.get_rank() == 0:
-      save_checkpoint(checkpoint_meta_dir, state)
+      save_checkpoint(checkpoint_meta_dir, f'checkpoint_{save_step}.pth', state)
 
     # Report the loss on an evaluation dataset periodically
     if step % FLAGS.eval_period == 0:
