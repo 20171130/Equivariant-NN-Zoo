@@ -14,9 +14,9 @@ def get_config(spec=None):
     config.data_config = data
     config.model_config = model
 
-    config.epoch_subdivision = 1
-    config.learning_rate = 3e-4
-    config.batch_size = 128
+    config.epoch_subdivision = 5
+    config.learning_rate = 1e-2
+    config.batch_size = 64
 
     config.use_ema = True
     config.ema_decay = 0.99
@@ -27,7 +27,7 @@ def get_config(spec=None):
     config.early_stopping_patiences = {"training_loss": 20}
     config.early_stopping_lower_bounds = {"LR": 1e-6}
 
-    config.loss_coeffs = {"energy": [1e3, "MSELoss"], "forces": [1e3, "MSELoss"]}
+    config.loss_coeffs = {"energy": [1e3, "MSELoss"], "forces": [3e4, "MSELoss"]}
     config.metrics_components = {"energy": ["mae"], "forces": ["mae"]}
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
@@ -36,8 +36,9 @@ def get_config(spec=None):
 
     model.n_dim = 64
     model.l_max = 2
-    model.r_max = 4.0
+    model.r_max = 5.0
     model.num_layers = 5
+    model.jit = True
     model.node_attrs = "16x0e"
     num_types = 20
 

@@ -11,16 +11,16 @@ from .dataset import CondensedDataset
 from absl import flags
 
 class Collater(object):
-    def __init__(self, attrs={}):
-        self.attrs = attrs
+    def __init__(self):
+        pass
 
     @classmethod
     def for_dataset(cls, dataset):
-        return cls(attrs=dataset.attrs)
+        return cls()
 
     def collate(self, batch: List[Data]) -> Batch:
         """Collate a list of data"""
-        out = Batch.from_data_list(batch, attrs=self.attrs)
+        out = Batch.from_data_list(batch, attrs=batch[0].attrs)
         return out
 
     def __call__(self, batch: List[Data]) -> Batch:
@@ -92,7 +92,7 @@ def getDataIters(config):
       num_workers=FLAGS.dataloader_num_workers,
       pin_memory=True,
       # avoid getting stuck
-      timeout=(60 if FLAGS.dataloader_num_workers > 0 else 0),
+      timeout=(300 if FLAGS.dataloader_num_workers > 0 else 0),
       generator = loader_rng,
       drop_last = True
   )

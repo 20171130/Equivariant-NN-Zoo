@@ -18,6 +18,7 @@ import os
 import re
 import logging
 
+from inspect import signature
 
 class CondensedDataset(Batch):
     """
@@ -35,7 +36,9 @@ class CondensedDataset(Batch):
         super().__init__(attrs, **data)
         self.data = keyMap(self.data, key_map)
         self.attrs = keyMap(self.attrs, key_map)
-            
+        self.attrs = {key:(value[0], value[1]) for key, value in self.attrs.items()}
+        # converts from object array to tuple
+             
         if type_names == None:
             type_names = ase.atom.atomic_numbers.keys()
         self.type_names = list(type_names)
@@ -103,9 +106,16 @@ class CondensedDataset(Batch):
         if isinstance(idx, str):
             return self.data[idx]
         elif isinstance(idx, (int, np.integer)):
-            data = self.get(idx)
+            data = self.get(idx).clone()
             for func in self.preprocess:
-                data = func(data)
+                sig = signature(func)
+                if len(sig.parameters) == 1:
+                    data = func(data)
+                else:
+                    tensors, attrs = data.data, data.attrs
+                    tensors, attrs = func(tensors, attrs)
+                    data.data.update(tensors)
+                    data.attrs.update(attrs)
             return data
         else:
             dataset = self.index_select(idx)

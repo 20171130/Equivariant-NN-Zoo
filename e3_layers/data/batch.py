@@ -18,6 +18,10 @@ class Batch(Data):
         Call from_data_list if initializing from a list of data dicts.
         """
         super().__init__(attrs, **tensors)
+        if '_n_nodes' in self.data:
+            self.nodeSegment()
+        if '_n_edges' in self.data:
+            self.edgeSegment()
 
     def computeCumsums(self):
         if "_n_nodes" in self.data and (not hasattr(self, 'node_cumsum')):
@@ -97,7 +101,12 @@ class Batch(Data):
                     elif isinstance(irreps, str) or isinstance(irreps, Irreps):
                         dim = Irreps(irreps).dim
                     items = [item.reshape(-1, dim) for item in items]
-                data[key] = torch.cat(items, dim=0)
+                tmp = torch.cat(items, dim=0)
+                if tmp.dtype in (torch.int64, torch.int32, torch.int16, torch.int8):
+                    tmp = tmp.long()
+                else:
+                    tmp = tmp.float()
+                data[key] = tmp
 
         return cls(attrs, **data)
 
@@ -153,21 +162,19 @@ class Batch(Data):
         return result
 
     def nodeSegment(self):
-        if not "_node_segment" in self.data:
-            batch = []
-            for i, n in enumerate(self["_n_nodes"]):
-                batch += [i] * n
-            batch = torch.tensor(batch)
-            self.data["_node_segment"] = batch
+        batch = []
+        for i, n in enumerate(self["_n_nodes"]):
+            batch += [i] * n
+        batch = torch.tensor(batch)
+        self.data["_node_segment"] = batch
         return self.data["_node_segment"]
       
     def edgeSegment(self):
-        if not "_edge_segment" in self.data:
-            batch = []
-            for i, n in enumerate(self["_n_edges"]):
-                batch += [i] * n
-            batch = torch.tensor(batch)
-            self.data["_edge_segment"] = batch
+        batch = []
+        for i, n in enumerate(self["_n_edges"]):
+            batch += [i] * n
+        batch = torch.tensor(batch)
+        self.data["_edge_segment"] = batch
         return self.data["_edge_segment"]
 
     def __getitem__(self, idx):

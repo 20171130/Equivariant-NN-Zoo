@@ -17,7 +17,7 @@ def featureModel(
     node_attrs,
     edge_spherical=None,
     avg_num_neighbors=10,
-    remat=False
+    normalize=False
 ):
     config = ConfigDict()
 
@@ -43,7 +43,7 @@ def featureModel(
     layers.update(embedCategorial(num_types, ('1x0e', 'species'), (node_attrs, 'node_attrs')))
     layers['node_features'] = {
         "module": PointwiseLinear,
-        "irreps_in": (f"{num_types}x0e", "onehot"),
+        "irreps_in": (f'{num_types}x0e', "onehot"),
         "irreps_out": (f'{n_dim}x0e', "node_features"),
     }
     layers["spharm_edges"] = {
@@ -80,22 +80,21 @@ def featureModel(
         "nonlinearity_type": "gate",
         "nonlinearity_scalars": {"e": "silu", "o": "tanhlu"},
         "nonlinearity_gates": {"e": "silu", "o": "tanhlu"},
+        "normalize": normalize,
         **irreps,
     }
-    if remat:
-        mp['remat'] = True
     cur_node_features = Irreps(f"{n_dim}x0e")
     node_features = Irreps(node_features)
     for layer_i in range(num_layers):
         cur = deepcopy(mp)
-        cur["input_features"][0] = cur_node_features
+        cur["input_features"][0] = str(cur_node_features)
         cur_node_features = [
             (mul, ir)
             for mul, ir in node_features
             if tp_path_exists(cur_node_features, edge_spherical, ir)
         ]
         cur_node_features = Irreps(cur_node_features)
-        cur["output_features"][0] = cur_node_features
+        cur["output_features"][0] = str(cur_node_features)
         layers[f"layer{layer_i}"] = cur
 
     config.layers = list(layers.items())

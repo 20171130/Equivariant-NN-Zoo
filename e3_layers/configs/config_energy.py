@@ -34,17 +34,18 @@ def get_config(spec=None):
     model.n_dim = 64
     model.l_max = 3
     model.r_max = 4.0
-    model.num_layers = 4
-    model.node_attrs = "8x0e"
+    model.num_layers = 5
+    model.node_attrs = "20x0e"
+    model.jit = True
     num_types = 10
 
-    data.n_train = 1200#00
+    data.n_train = 120000
     data.n_val = 10831
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = "qm9.hdf5"
+    data.path = "/opt/shared-data/qm9.hdf5"
     data.type_names = list(ase.atom.atomic_numbers.keys())[:num_types]
-    data.key_map = {"Z": "species", "R": "pos", "U": "total_energy"}
+    data.key_map = {"Z": "species", "R": "pos", "U0": "total_energy"}
     data.preprocess = [partial(computeEdgeIndex, r_max=model.r_max)]
 
     "+".join([f"{model.n_dim}x{n}e+{model.n_dim}x{n}o" for n in range(model.l_max + 1)])
@@ -59,6 +60,7 @@ def get_config(spec=None):
         num_types=num_types,
         num_layers=model.num_layers,
         r_max=model.r_max,
+        normalize=False
     )
     shifts = [
         -620.4502,

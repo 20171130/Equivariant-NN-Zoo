@@ -73,14 +73,6 @@ You can download the processed data from https://drive.google.com/drive/folders/
 Run `python3 train.py --config config_energy`. 
 Jointly training on energy and force is also supported.
 The accuracy is comparable to [Nequip](https://github.com/mir-group/nequip) on [QM9](https://data.dgl.ai/dataset/qm9_edge.npz) (total energy MAE 5.0 meV).
-## Atomic Multiple Prediction
-Run `python3 train.py --config config_dipole`. 
-The accuracy is comparable to or better than [this paper](https://pubs.acs.org/doi/10.1021/acs.jctc.1c01021) on the dataset it used (dipole MAE 4.1e-4 ev\*A).
-For predicting multipoles of higher degrees, you should decompose them into irreducible representations first.
-## Hamiltonian Prediction
-Run `python3 train.py --config config_hamiltonian`. 
-Notice that this config only works for H2O computed in ORCA convention.
-The accuracy is comprable (MAE 1.7e-5 Hatree) to [PhiSNet](https://proceedings.neurips.cc/paper/2021/hash/78f1893678afbeaa90b1fa01b9cfb860-Abstract.html) on the water dataset it used.
 ## Score Based Generative Model (continous Variance-Perserving-Stochastic-Differential-Equation)
 ![A sample from the model.](images/mol1.png)
 ![A sample from the model.](images/mol2.png)
@@ -91,14 +83,21 @@ You may set up `data.std` in the config file to scale the input by `1/data.std`,
 Run
 ```
 # small organic molecules
- python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion    --name test   --wandb_project diffusion --config_spec embed_time_in_nodes --wandb
+ python3 train.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --config config_diffusion    --name test   --project diffusion --wandb
  
 # protein
- python3 train_sde.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --e3_config config_diffusion_protein   --wandb_project diffusion_protein --config_spec embed_time_in_nodes  --seed 0 --name test --wandb
+ python3 train.py --sde_config ../score_sde_pytorch/configs/vp/cifar10_ncsnpp_continuous.py  --workdir results --config config_diffusion_protein   --project diffusion_protein  --seed 0 --name test --wandb
  
 ```
 The script assumes there is a tensor named `pos` and reserves the key `t` for time and `species` for molecule/atom/residual type.
-
+## Atomic Multiple Prediction (legacy version)
+Run `python3 train.py --config config_dipole`. 
+The accuracy is comparable to or better than [this paper](https://pubs.acs.org/doi/10.1021/acs.jctc.1c01021) on the dataset it used (dipole MAE 4.1e-4 ev\*A).
+For predicting multipoles of higher degrees, you should decompose them into irreducible representations first.
+## Hamiltonian Prediction (legacy version)
+Run `python3 train.py --config config_hamiltonian`. 
+Notice that this config only works for H2O computed in ORCA convention.
+The accuracy is comprable (MAE 1.7e-5 Hatree) to [PhiSNet](https://proceedings.neurips.cc/paper/2021/hash/78f1893678afbeaa90b1fa01b9cfb860-Abstract.html) on the water dataset it used.
 
 # Model Interface and Data Format
 The input and output of all modules in this repository are instances of `e3_layers.data.Data`.

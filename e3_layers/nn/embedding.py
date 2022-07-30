@@ -1,16 +1,17 @@
 import torch
 
 from e3nn import o3
-from e3nn.util.jit import compile_mode
+from e3nn.o3 import Irreps
 
 from .sequential import Module
 from .pointwise import PointwiseLinear
 import torch
 import torch.nn.functional
 
+from torch import Tensor
 from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple
 
-from typing import Optional
 import math
 
 import torch
@@ -22,12 +23,10 @@ from e3nn.util.jit import compile_mode
 from ml_collections.config_dict import ConfigDict
 from ..utils import build
 
-
-def symmetricCutoff(r_max, **kwargs):
-    def func(x):
-        x = x/r_max
-        return (x-1)**2 *(x+1)**2 *(abs(x)<1.).float()
-    return func
+@torch.jit.script
+def symmetricCutoff(x: torch.Tensor, factor: float, p: float = 6.0) -> torch.Tensor:
+    x = x * factor
+    return (x-1)**2 *(x+1)**2 *(abs(x)<1.).float()
 
 @torch.jit.script
 def _poly_cutoff(x: torch.Tensor, factor: float, p: float = 6.0) -> torch.Tensor:
@@ -45,7 +44,7 @@ class PolynomialCutoff(torch.nn.Module):
     _factor: float
     p: float
 
-    def __init__(self, r_max: float, p: float = 6):
+    def __init__(self, r_max: float, p: float = 6, cutoff=_poly_cutoff):
         r"""Polynomial cutoff, as proposed in DimeNet: https://arxiv.org/abs/2003.03123
 
 
@@ -61,6 +60,7 @@ class PolynomialCutoff(torch.nn.Module):
         assert p >= 2.0
         self.p = float(p)
         self._factor = 1.0 / float(r_max)
+        self.cutoff = cutoff
 
     def forward(self, x):
         """
@@ -68,7 +68,7 @@ class PolynomialCutoff(torch.nn.Module):
 
         x: torch.Tensor, input distance
         """
-        return _poly_cutoff(x, self._factor, p=self.p)
+        return self.cutoff(x, self._factor, p=self.p)
 
 
 class BesselBasis(nn.Module):
@@ -155,31 +155,27 @@ class SphericalEncoding(Module):
             spherical_harmonics=irreps_out,
             output_keys=["spherical_harmonics"],
         )
-        self.mul = self.irreps_in["vectors"][0].mul
+        self.mul = Irreps(self.irreps_in["vectors"])[0].mul
         irreps = []
-        for irrep in self.irreps_out["spherical_harmonics"]:
+        for irrep in Irreps(self.irreps_out["spherical_harmonics"]):
             assert irrep.mul == self.mul
             irreps += [str(irrep.ir)]
         self.sh = o3.SphericalHarmonics(
             "+".join(irreps), edge_sh_normalize, edge_sh_normalization
         )
 
-    def forward(self, data):
-        vectors = self.inputKeyMap(data)["vectors"]
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        vectors = data["vectors"]
         cat, _ = vectors.shape
         edge_sh = self.sh(vectors.view(cat, self.mul, 3)).view(cat, -1)
-        data.attrs.update(
-            self.outputKeyMap(
-                {
+        attrs = {
                     "spherical_harmonics": (
                         "edge",
                         self.irreps_out["spherical_harmonics"],
                     )
                 }
-            )
-        )
-        data.update(self.outputKeyMap({"spherical_harmonics": edge_sh}))
-        return data
+        data = {"spherical_harmonics": edge_sh}
+        return data, attrs
 
 
 @compile_mode("script")
@@ -192,7 +188,7 @@ class RadialBasisEncoding(Module):
         r_min=0,
         polynomial_degree=6,
         basis=BesselBasis,
-        cutoff=PolynomialCutoff,
+        cutoff=_poly_cutoff,
         irreps_in="1x0e",
         one_over_r = True
     ):
@@ -205,33 +201,22 @@ class RadialBasisEncoding(Module):
             radial_embedding=irreps_out,
             output_keys=["radial_embedding"],
         )
-        num_basis = self.irreps_out["radial_embedding"]
+        num_basis = Irreps(self.irreps_out["radial_embedding"])
         num_basis = num_basis[0].mul
         self.basis = basis(r_max, r_min, num_basis, trainable, one_over_r=one_over_r)
-        self.cutoff = cutoff(r_max, p=polynomial_degree)
+        self.cutoff = PolynomialCutoff(r_max, p=polynomial_degree, cutoff=cutoff)
+        self.r_max = r_max
         
-    def forward(self, data):
-        if isinstance(data, torch.Tensor):
-            input = data
-            is_per = None
-        else:
-            input = self.inputKeyMap(data)
-            is_per = input.attrs['input'][0]
-            input = input['input']
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data['input']
+        is_per = attrs['input'][0]
         embedded = (
             self.basis(input) * self.cutoff(input)[:, None]
         ).view(input.shape[0], -1)
         
-        if isinstance(data, torch.Tensor):
-            return embedded
-        else:
-            data.attrs.update(
-                self.outputKeyMap(
-                    {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
-                )
-            )
-            data.update(self.outputKeyMap({"radial_embedding": embedded}))
-            return data
+        attrs = {"radial_embedding": (is_per, self.irreps_out["radial_embedding"])}
+        data = {"radial_embedding": embedded}
+        return data, attrs
           
           
 @compile_mode("script")
@@ -254,28 +239,19 @@ class Broadcast(Module):
         self.to = to
 
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)
-        is_per = input.attrs['input'][0]
-        input = input['input']
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        is_per = attrs['input'][0]
+        input = data['input']
 
-        if is_per == 'graph':
-            if self.to == 'node':
-                output = input[data.nodeSegment()]
-            elif self.to == 'edge':
-                output = input[data.edgeSegment()]
-            else:
-                raise ValueError()
+        assert is_per == 'graph'
+        if self.to == 'node':
+            output = input[data['_node_segment']]
+        elif self.to == 'edge':
+            output = input[data['_edge_segment']]
         else:
-            raise UnimplementedError()
+            raise ValueError()
 
-        data.attrs.update(
-            self.outputKeyMap(
-                {"output": (self.to, self.irreps_out["output"])}
-            )
-        )
-        data.update(self.outputKeyMap({"output": output}))
-        return data
+        return {"output": output}, {"output": (self.to, self.irreps_out["output"])}
 
 
 @compile_mode("script")
@@ -292,23 +268,17 @@ class OneHotEncoding(Module):
         self.num_types = num_types
         self.init_irreps(input=irreps_in, one_hot=irreps_out, output_keys="one_hot")
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)["input"]
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data["input"]
         type_numbers = input.squeeze(-1)
 
         one_hot = torch.nn.functional.one_hot(
             type_numbers, num_classes=self.num_types
         ).to(device=type_numbers.device, dtype=torch.float)
 
-        tmp = self.inputKeyMap(data.attrs)
-        data.attrs.update(
-            self.outputKeyMap(
-                {"one_hot": (tmp["input"][0], self.irreps_out["one_hot"])}
-            )
-        )
-        result = {"one_hot": one_hot}
-        data.update(self.outputKeyMap(result))
-        return data
+        attrs = {"one_hot": (attrs["input"][0], self.irreps_out["one_hot"])}
+        data = {"one_hot": one_hot}
+        return data, attrs
       
 @compile_mode("script")
 class RelativePositionEncoding(Module):
@@ -316,28 +286,27 @@ class RelativePositionEncoding(Module):
         self,
         radial_encoding,
         segment,
-        irreps_out
+        irreps_out,
+        id = None
     ):
         super().__init__()
-        self.init_irreps(input=segment, output=irreps_out, output_keys=['output'])
+        self.init_irreps(input=segment, output=irreps_out, id=id, output_keys=['output'])
         radial_encoding['irreps_in'] = '1x0e'
         radial_encoding['irreps_out'] = self.irreps_out['output']
         radial_encoding = build(radial_encoding)
         self.radial = radial_encoding
         
 
-    def forward(self, data):
-        segment = self.inputKeyMap(data)['input']
-        relative_pos = data['edge_index'][0] - data['edge_index'][1]
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        segment = data['input']
+        if 'id' in self.irreps_in and not self.irreps_in['id'] is None:
+            id = data['id']
+            relative_pos = id[data['edge_index'][0]] - id[data['edge_index'][1]]
+        else:
+            relative_pos = data['edge_index'][0] - data['edge_index'][1]
         mask = segment[data['edge_index'][0]] == segment[data['edge_index'][1]]
         mask = mask.float()
         relative_pos = mask*relative_pos.view(-1, 1) + (1-mask)*1e5
-        output = self.radial(relative_pos)
+        output, attrs = self.radial({'input':relative_pos}, attrs)
 
-        data.attrs.update(
-            self.outputKeyMap(
-                {"output": ('edge', self.irreps_out["output"])}
-            )
-        )
-        data.update(self.outputKeyMap({"output": output}))
-        return data
+        return {'output':output['radial_embedding']}, {"output": ('edge', self.irreps_out["output"])}

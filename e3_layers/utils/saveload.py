@@ -85,7 +85,11 @@ def saveProtein(batch, workdir, idx=0, filename='tmp'):
             j[4] = 'A'
             j[4] = j[4].rjust(1) #Astring
             
-            j[5] = f'{i+1}'
+            if 'id' in batch:
+                tmp = batch[idx]['id'][i].item()
+                j[5] = f"{tmp}"
+            else:
+                j[5] = f'{i+1}'
             j[5] = j[5].rjust(4) #resnum
             
             x, y, z = batch[idx]['pos'][i]
@@ -462,11 +466,11 @@ def restore_checkpoint(ckpt_dir, state, device):
         return state
 
 
-def save_checkpoint(ckpt_dir, state):
+def save_checkpoint(ckpt_path, state):
     saved_state = {
       'optimizer': state['optimizer'].state_dict(),
       'model': state['model'].state_dict(),
       'ema': state['ema'].state_dict(),
       'step': state['step']
     }
-    torch.save(saved_state, ckpt_dir)
+    torch.save(saved_state, ckpt_path)

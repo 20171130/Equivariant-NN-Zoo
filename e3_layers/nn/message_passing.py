@@ -1,17 +1,23 @@
-from typing import Optional, Dict, Callable
 import torch
 from torch_runstats.scatter import scatter
 
 from e3nn import o3
 from e3nn.nn import Gate, NormActivation
+from e3nn.o3 import Irreps
 from e3nn.nn import FullyConnectedNet
 from e3nn.o3 import Linear, FullyConnectedTensorProduct
 
-from .pointwise import TensorProductExpansion
+from .pointwise import TensorProductExpansion, LayerNormalization
 from .sequential import Module
 from ..utils import build, tp_path_exists, activations
+from e3nn.util.jit import compile_mode
 
+from torch import Tensor
+from e3nn.util.jit import compile_mode
+from typing import Optional, Dict, Tuple, Callable
+from typing_extensions import Final
 
+@compile_mode("script")
 class FactorizedConvolution(Module, torch.nn.Module):
     avg_num_neighbors: Optional[float]
     use_sc: bool
@@ -66,7 +72,7 @@ class FactorizedConvolution(Module, torch.nn.Module):
 
         # init_irreps already confirmed that the edge embeddding is all invariant scalars
         self.fc = FullyConnectedNet(
-            [self.irreps_in["edge_radial"].num_irreps]
+            [Irreps(self.irreps_in["edge_radial"]).num_irreps]
             + invariant_layers * [invariant_neurons]
             + [self.tp.tp.weight_numel],
             activations["ssp"],
@@ -76,14 +82,14 @@ class FactorizedConvolution(Module, torch.nn.Module):
         if self.use_sc:
             self.sc = FullyConnectedTensorProduct(
                 feature_irreps_in,
-                self.irreps_in["node_attrs"],
+                Irreps(self.irreps_in["node_attrs"]),
                 feature_irreps_out,
             )
 
         self.reduce = reduce
 
-    def forward(self, data):
-        input = self.inputKeyMap(data)
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
+        input = data
         weight = self.fc(input["edge_radial"])
 
         x = input["input_features"]
@@ -112,16 +118,14 @@ class FactorizedConvolution(Module, torch.nn.Module):
         else:
             x = edge_features
 
-        is_per = self.inputKeyMap(data.attrs)["input_features"][0]
-        data.attrs.update(
-            self.outputKeyMap(
-                {"output_features": (is_per, self.irreps_out["output_features"])}
-            )
-        )
-        data.update(self.outputKeyMap({"output_features": x}))
-        return data
+        is_per = attrs["input_features"][0]
+        attrs = {"output_features": (is_per, self.irreps_out["output_features"])}
+        data = {"output_features": x}
+        return data, attrs
 
+@compile_mode("script")
 class MessagePassing(Module, torch.nn.Module):
+    normalize: Final[bool]
     def __init__(
         self,
         input_features,
@@ -134,6 +138,7 @@ class MessagePassing(Module, torch.nn.Module):
         nonlinearity_type: str = "gate",
         nonlinearity_scalars: Dict[int, Callable] = {"e": "ssp", "o": "tanh"},
         nonlinearity_gates: Dict[int, Callable] = {"e": "ssp", "o": "abs"},
+        normalize=False
     ):
         """Convolution with nonlinearity and residual connection"""
         super().__init__()
@@ -159,9 +164,9 @@ class MessagePassing(Module, torch.nn.Module):
         }
         self.resnet = resnet
 
-        edge_attr_irreps = self.irreps_in["edge_spherical"]
-        irreps_layer_out_prev = self.irreps_in["input_features"]
-        self.feature_irreps_hidden = self.irreps_out["output_features"]
+        edge_attr_irreps = Irreps(self.irreps_in["edge_spherical"])
+        irreps_layer_out_prev = Irreps(self.irreps_in["input_features"])
+        self.feature_irreps_hidden = Irreps(self.irreps_out["output_features"])
 
         irreps_scalars = o3.Irreps(
             [
@@ -230,29 +235,28 @@ class MessagePassing(Module, torch.nn.Module):
             edge_radial=edge_radial,
             edge_spherical=edge_spherical,
         )
+        self.normalize = normalize
+        if self.normalize:
+            self.norm = LayerNormalization(self.irreps_out["output_features"], self.irreps_out["output_features"])
 
-    #    tmp = self.irreps_out['output_features']
-    #   self.linear_tp = Linear(tmp, tmp)
-    #  self.tp = TensorProductExpansion(tmp, tmp, tmp, 'uuu', internal_weight=True)
-    def forward(self, data):
-        input = self.inputKeyMap(data)
+    def forward(self, data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]]):
         # save old features for resnet
-        old_x = input["input_features"]
+        old_x = data["input_features"]
         # run convolution
-        output = self.conv(input)["output_features"]
+        data, _ = self.conv(data, attrs)
+        output = data["output_features"]
         # do nonlinearity
         output = self.equivariant_nonlin(output)
         # do resnet
         #   output = output + self.tp(output, self.linear_tp(output))
         if self.resnet:
             output = old_x + output
+            
+        if self.normalize:
+            tmp = self.norm({'input':output}, attrs)[0]
+            output = tmp['output']
 
-        is_per = self.inputKeyMap(data.attrs)["input_features"][0]
-        data.attrs.update(
-            self.outputKeyMap(
-                {"output_features": (is_per, self.irreps_out["output_features"])}
-            )
-        )
-        data.update(self.outputKeyMap({"output_features": output}))
-
-        return data
+        is_per = attrs["input_features"][0]
+        attrs = {"output_features": (is_per, self.irreps_out["output_features"])}
+        data = {"output_features": output}
+        return data, attrs

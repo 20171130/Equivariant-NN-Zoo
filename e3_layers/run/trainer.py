@@ -22,6 +22,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from e3nn.o3 import Irreps
 from ml_collections.config_dict import ConfigDict
+from absl import flags
 
 from ..data import DataLoader, CondensedDataset
 from ..utils import (
@@ -53,7 +54,7 @@ class Trainer:
         loss_coeffs: Union[dict, str] = None,
         train_on_keys: Optional[List[str]] = None,
         metrics_components: Optional[Union[dict, str]] = None,
-        metrics_key="validation_loss",
+        metric_key="validation_loss",
         early_stopping_conds: Optional[EarlyStopping] = None,
         max_epochs: int = 1000000,
         learning_rate: float = 1e-2,
@@ -133,7 +134,9 @@ class Trainer:
     def init_objects(self):
 
         self.model.to(self.torch_device)
-        self.model = DDP(self.model)
+        FLAGS = flags.FLAGS
+        if FLAGS.world_size > 1:
+            self.model = DDP(self.model)
 
         self.num_weights = sum(p.numel() for p in self.model.parameters())
         self.logger.info(f"Number of weights: {self.num_weights}")
@@ -216,11 +219,11 @@ class Trainer:
         )
 
         if not (
-            self.metrics_key.lower().startswith("validation")
-            or self.metrics_key.lower().startswith("training")
+            self.metric_key.lower().startswith("validation")
+            or self.metric_key.lower().startswith("training")
         ):
             raise RuntimeError(
-                f"metrics_key should start with either {'validation'} or {'training'}"
+                f"metric_key should start with either {'validation'} or {'training'}"
             )
 
     def set_dataset(self, dataset, validation_dataset) -> None:
@@ -290,7 +293,7 @@ class Trainer:
             # PyTorch recommends this for GPU since it makes copies much faster
             pin_memory=(self.torch_device != torch.device("cpu")),
             # avoid getting stuck
-            timeout=(10 if FLAGS.dataloader_num_workers > 0 else 0),
+            timeout=(60 if FLAGS.dataloader_num_workers > 0 else 0),
             # use the right randomness
             generator=self.loader_rng,
         )
@@ -353,9 +356,6 @@ class Trainer:
                     self.logger.warning(f"equivariance test failed for {key}")
 
     def batch_step(self, data, validation=False):
-        # no need to have gradients from old steps taking up memory
-        self.optim.zero_grad(set_to_none=True)
-
         if validation:
             self.model.eval()
         else:
@@ -373,7 +373,6 @@ class Trainer:
             # see https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#use-parameter-grad-none-instead-of-model-zero-grad-or-optimizer-zero-grad
             self.optim.zero_grad(set_to_none=True)
             loss.backward()
-
             # See https://stackoverflow.com/a/56069467
             # Has to happen after .backward() so there are grads to clip
             if self.max_gradient_norm < float("inf"):
@@ -495,7 +494,7 @@ class Trainer:
             self.end_of_epoch_log()
 
             if self.lr_scheduler_name == "ReduceLROnPlateau":
-                self.lr_sched.step(metrics=self.mae_dict[self.metrics_key])
+                self.lr_sched.step(metrics=self.mae_dict[self.metric_key])
         self.iepoch += 1
         
         data_config = self.data_config
@@ -568,7 +567,7 @@ class Trainer:
 
         header = "epoch, wall, LR"
 
-        categories = ["training", "validation"] if self.iepoch > 0 else ["validation"]
+        categories = ["training", "validation"]
         log_header = {}
         log_str = {}
 
@@ -689,7 +688,7 @@ class Trainer:
         if self.rank > 0:
             return
         with atomic_write_group():
-            current_metrics = self.mae_dict[self.metrics_key]
+            current_metrics = self.mae_dict[self.metric_key]
             if current_metrics < self.best_metrics:
                 self.best_metrics = current_metrics
                 self.best_epoch = self.iepoch
@@ -778,7 +777,14 @@ class Trainer:
             supported_formats=dict(torch=["pth", "pt"], yaml=["yaml"], json=["json"]),
             filename=filename
         )
-        return cls.from_dict(dictionary, **kwargs)
+        if 'progress' in dictionary:
+            return cls.from_dict(dictionary, **kwargs)
+        else:
+            model = Trainer.load_model_from_training_session(
+                state_dict = dictionary,
+                model_config=kwargs['model_config']
+            )
+            return cls(model, **kwargs)
 
     @classmethod
     def from_dict(cls, dictionary, **kwargs):
@@ -808,8 +814,7 @@ class Trainer:
                 raise AttributeError("model weights & bias are not saved")
 
             model = Trainer.load_model_from_training_session(
-                traindir=load_path.parent,
-                model_name=load_path.name,
+                model_path=os.path.join(load_path.parent, load_path.name),
                 model_config=model_config
             )
             logging.debug(f"Reload the model from {load_path}")
@@ -850,28 +855,30 @@ class Trainer:
                 f"The previous run has properly stopped with {stop_arg}."
                 "Please either increase the max_epoch or change early stop criteria"
             )
+            
+        if 'learning_rate' in kwargs and not kwargs['learning_rate'] is None:
+            for g in trainer.optim.param_groups:
+                g['lr'] = kwargs['learning_rate']
 
         return trainer
 
     @staticmethod
     def load_model_from_training_session(
-        traindir,
         model_config,
-        model_name="best_model.pth",
+        model_path=None,
+        state_dict=None,
         device="cpu"
     ):
-        traindir = str(traindir)
-        model_name = str(model_name)
-
         model = build(model_config)
         if model is not None: 
             model.to(
                 device=torch.device(device)
             )
-            model_state_dict = torch.load(
-                traindir + "/" + model_name, map_location=device
-            )
-            model.load_state_dict(model_state_dict)
+            if state_dict is None:
+                state_dict = torch.load(
+                    model_path, map_location=device
+                )
+            model.load_state_dict(state_dict)
         model = model
 
         return model

@@ -18,16 +18,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import wandb
 
-from models.ema import ExponentialMovingAverage
-import likelihood as likelihood
-
 from e3_layers.utils import build, pruneArgs, _countParameters, save_checkpoint, restore_checkpoint
 from e3_layers import configs
-from e3_layers.data import Batch, computeEdgeVector, getDataIters, CondensedDataset
-import e3_layers.run.sde_utils as losses
-import e3_layers.run.sde_utils as sde_lib
-from e3_layers.run.sde_utils import getScaler
-import e3_layers.run.sde_sampling as sampling
+from e3_layers.data import Batch, getDataIters, CondensedDataset
 
 config_flags.DEFINE_config_file(
   "sde_config", None, "Training sde_configuration.", lock_config=True)
@@ -38,12 +31,12 @@ flags.DEFINE_string("config_spec", '', "Config specification.")
 flags.DEFINE_string("name", "default", "Name of the experiment.")
 flags.DEFINE_integer("seed", 0, "The RNG seed.")
 flags.DEFINE_integer("dataloader_num_workers", 4, "Number of workers per training process.")
-flags.DEFINE_string("resume_from", None, "The name of the trainer checkpoint to resume from. For supervised learning, you can find trainer.pt in workdir.")
+flags.DEFINE_string("resume_from", None, "The name of the trainer checkpoint or model checkpoint to resume from. For supervised learning, you can find trainer.pt in workdir.")
 flags.DEFINE_boolean("profiling", False, "If profiling.")
 flags.DEFINE_boolean("equivariance_test", False, "If performs equivariance test.")
 
 flags.DEFINE_boolean("wandb", False, "If logging with wandb.")
-flags.DEFINE_string("wandb_project", None, "The name of the wandb project.")
+flags.DEFINE_string("project", 'default_project', "The name of the project.")
 flags.DEFINE_string("verbose", "INFO", "Logging verbosity.")
 flags.DEFINE_integer("log_period", 100, "Number of training batches.")
 flags.DEFINE_integer("eval_period", 20, "")
@@ -56,7 +49,7 @@ flags.mark_flags_as_required(["config"])
 
 
 def train_regression(config, FLAGS):
-  if FLAGS.wandb and rank == 0:
+  if FLAGS.wandb and dist.get_rank() == 0:
       from e3_layers.run.trainer import TrainerWandB as Trainer
   else:
       from e3_layers.run.trainer import Trainer
@@ -74,6 +67,12 @@ def train_regression(config, FLAGS):
   trainer.train()
 
 def train_diffusion(e3_config, FLAGS):
+  from models.ema import ExponentialMovingAverage
+  import likelihood as likelihood
+  import e3_layers.run.sde_utils as losses
+  import e3_layers.run.sde_utils as sde_lib
+  from e3_layers.run.sde_utils import getScaler
+  import e3_layers.run.sde_sampling as sampling
   """Runs the training pipeline.
 
   Args:
@@ -178,10 +177,6 @@ def train_diffusion(e3_config, FLAGS):
       wandb.log(dict(loss = sum(loss_lst)/len(loss_lst), optim_step = step))
       loss_lst = []
 
-    # Save a temporary checkpoint to resume training after pre-emption periodically
-    if step != 0 and step % FLAGS.save_period == 0 and dist.get_rank() == 0:
-      save_checkpoint(checkpoint_meta_dir, state)
-
     # Report the loss on an evaluation dataset periodically
     if step % FLAGS.eval_period == 0:
       eval_batch = next(eval_iter).to(device)
@@ -201,8 +196,7 @@ def train_diffusion(e3_config, FLAGS):
       wandb.log(dict(eval_loss = eval_loss_mean, lr = optimizer.param_groups[0]["lr"], optim_step = step))
       
       # Save the checkpoint.
-      save_step = step // FLAGS.save_period 
-      save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{save_step}.pth'), state)
+      save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{step}.pth'), state)
 
       # Generate and save samples
       if sde_config.training.snapshot_sampling:
@@ -212,7 +206,6 @@ def train_diffusion(e3_config, FLAGS):
         sample_dir = os.path.join(workdir, "samples")
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         Path(this_sample_dir).mkdir(parents=True, exist_ok=True)
-        
         filenmae = saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth')
         wandb.log({'ground_truth': wandb.Molecule(filenmae), 'optim_step' : step})
 
@@ -220,37 +213,22 @@ def train_diffusion(e3_config, FLAGS):
         lst = [batch[0] for i in range(n_samples)]
         batch = Batch.from_data_list(lst, batch.attrs)
         samples_batch, n = sampling_fn(score_model, batch)
-        samples = [samples_batch[i] for i in range(len(samples_batch))]
-        
-        batch = computeEdgeVector(batch)
-        min_loss = 9999
-        argmin = 0
-        sum_loss = 0
-        for i, sample in enumerate(samples):
-          loss = (batch[0]['edge_length'] - sample['edge_length'])**2
-          loss = loss.mean().item()
-          sum_loss += loss
-          if loss < min_loss:
-            min_loss = loss
-            argmin = i
-
-        filename = f'{step}_{sum_loss/n_samples}'
-        filenmae = saveMol(samples_batch, idx=i, workdir=FLAGS.workdir, filename=filename)
+        filename = f'{step}'
+        filenmae = saveMol(samples_batch, idx=0, workdir=FLAGS.workdir, filename=filename)
         wandb.log({'sample': wandb.Molecule(filenmae), 'optim_step' : step})
 
 
 def main(rank):
   torch.cuda.set_device(rank)
   torch.cuda.empty_cache()
-  torch.jit.set_fusion_strategy([('STATIC', 2), ('DYNAMIC', 2)])
+  torch.jit.set_fusion_strategy([('DYNAMIC', 3)])
   FLAGS = flags.FLAGS
   FLAGS(sys.argv)
   world_size = FLAGS.world_size
   os.environ["MASTER_ADDR"] = FLAGS.master_addr
   os.environ["MASTER_PORT"] = FLAGS.master_port
 
-  # Create the working directory
-  Path(FLAGS.workdir).mkdir(exist_ok=True)
+  FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.project, FLAGS.name)
   config_name = FLAGS.config
   e3_config = getattr(configs, config_name, None)
   assert not e3_config is None, f"Config {config_name} not found."
@@ -262,16 +240,18 @@ def main(rank):
   handler.setFormatter(formatter)
   logger.addHandler(handler)
   if rank == 0:
-      # Set logger so that it outputs to both console and file
-      # Make logging work for both disk and Google Cloud Storage
-      gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
-      handler = logging.StreamHandler(gfile_stream)
-      handler.setFormatter(formatter)
-      logger.addHandler(handler)
-      logger.setLevel(getattr(logging, FLAGS.verbose))
-      # Run the training pipeline
+    # Create the working directory
+    Path(FLAGS.workdir).mkdir(exist_ok=True, parents=True)
+    # Set logger so that it outputs to both console and file
+    # Make logging work for both disk and Google Cloud Storage
+    gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
+    handler = logging.StreamHandler(gfile_stream)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(getattr(logging, FLAGS.verbose))
+    # Run the training pipeline
   else:
-      logger.setLevel(logging.WARNING)
+    logger.setLevel(logging.WARNING)
       
   if FLAGS.sde_config is None:
     config_dict = e3_config.to_dict()
@@ -282,7 +262,7 @@ def main(rank):
   else:
     mode = 'disabled'
   wandb.init(
-      project=FLAGS.wandb_project,
+      project=FLAGS.project,
       config=config_dict,
       mode = mode,
       name=f"{FLAGS.name}_{FLAGS.seed}",
@@ -306,10 +286,10 @@ def launch_mp():
   FLAGS = flags.FLAGS
   FLAGS(sys.argv)
   mp.set_start_method("spawn")
-  FLAGS.workdir = os.path.join(FLAGS.workdir, FLAGS.name)
-  if not FLAGS.resume_from and os.path.isdir(FLAGS.workdir):
+  workdir = os.path.join(FLAGS.workdir, FLAGS.project, FLAGS.name)
+  if not FLAGS.resume_from and os.path.isdir(workdir):
     if input('Workdir exists, continune and overwrite? (y/n)') in ("Y", "y"):
-      rmtree(FLAGS.workdir)
+      rmtree(workdir)
     else:
       exit()
   if FLAGS.world_size == 1:
