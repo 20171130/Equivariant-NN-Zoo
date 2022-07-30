@@ -777,7 +777,14 @@ class Trainer:
             supported_formats=dict(torch=["pth", "pt"], yaml=["yaml"], json=["json"]),
             filename=filename
         )
-        return cls.from_dict(dictionary, **kwargs)
+        if 'progress' in dictionary:
+            return cls.from_dict(dictionary, **kwargs)
+        else:
+            model = Trainer.load_model_from_training_session(
+                state_dict = dictionary,
+                model_config=kwargs['model_config']
+            )
+            return cls(model, **kwargs)
 
     @classmethod
     def from_dict(cls, dictionary, **kwargs):
@@ -807,8 +814,7 @@ class Trainer:
                 raise AttributeError("model weights & bias are not saved")
 
             model = Trainer.load_model_from_training_session(
-                traindir=load_path.parent,
-                model_name=load_path.name,
+                model_path=os.path.join(load_path.parent, load_path.name),
                 model_config=model_config
             )
             logging.debug(f"Reload the model from {load_path}")
@@ -858,23 +864,21 @@ class Trainer:
 
     @staticmethod
     def load_model_from_training_session(
-        traindir,
         model_config,
-        model_name="best_model.pth",
+        model_path=None,
+        state_dict=None,
         device="cpu"
     ):
-        traindir = str(traindir)
-        model_name = str(model_name)
-
         model = build(model_config)
         if model is not None: 
             model.to(
                 device=torch.device(device)
             )
-            model_state_dict = torch.load(
-                traindir + "/" + model_name, map_location=device
-            )
-            model.load_state_dict(model_state_dict)
+            if state_dict is None:
+                state_dict = torch.load(
+                    model_path, map_location=device
+                )
+            model.load_state_dict(state_dict)
         model = model
 
         return model

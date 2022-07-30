@@ -31,7 +31,7 @@ flags.DEFINE_string("config_spec", '', "Config specification.")
 flags.DEFINE_string("name", "default", "Name of the experiment.")
 flags.DEFINE_integer("seed", 0, "The RNG seed.")
 flags.DEFINE_integer("dataloader_num_workers", 4, "Number of workers per training process.")
-flags.DEFINE_string("resume_from", None, "The name of the trainer checkpoint to resume from. For supervised learning, you can find trainer.pt in workdir.")
+flags.DEFINE_string("resume_from", None, "The name of the trainer checkpoint or model checkpoint to resume from. For supervised learning, you can find trainer.pt in workdir.")
 flags.DEFINE_boolean("profiling", False, "If profiling.")
 flags.DEFINE_boolean("equivariance_test", False, "If performs equivariance test.")
 
