@@ -67,7 +67,7 @@ def get_config(spec=''):
     config.data_config = data
     config.model_config = model
 
-    config.learning_rate = 8e-3
+    config.learning_rate = 5e-3
     config.batch_size = 4
     config.grad_acc = 4
     

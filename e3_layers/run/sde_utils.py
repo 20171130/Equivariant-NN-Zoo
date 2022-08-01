@@ -13,6 +13,7 @@ from sampling import get_predictor, get_corrector
 
 from e3_layers.utils import saveMol
 import wandb
+import logging
 
 
 def get_optimizer(config, params):
@@ -163,14 +164,10 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     score = score_fn(batch_perturbed)['score']
     if not likelihood_weighting:
       losses = torch.square(score*std + z)
-      if 'pos_mask' in batch:
-          losses = losses * (1. - batch['pos_mask'])
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
     else:
       g2 = sde.sde(torch.zeros_like(z), t[batch.nodeSegment()].unsqueeze(-1))[1] ** 2
       losses = torch.square(score+ z / std)
-      if 'pos_mask' in batch:
-          losses = losses * (1. - batch['pos_mask'])
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2 * 0.01
     
     loss = torch.mean(losses)
@@ -241,7 +238,13 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
       if not grad_clid_norm is None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clid_norm)
       if not state['step']==0 and state['step']%grad_acc==0:
-        optimizer.step()
+        flag = True
+        for name, param in model.named_parameters():
+          if (param.grad).isnan().any() or (param.grad).isinf().any():
+            flag = False
+            logging.warning("Gradient is None, skipping optim step.")
+        if flag:
+          optimizer.step()
         optimizer.zero_grad(set_to_none=True)
       state['step'] += 1
       state['ema'].update(model.parameters())

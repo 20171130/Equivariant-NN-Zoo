@@ -216,9 +216,13 @@ class Data(object):
     def dumpHDF5(self, path):
         with h5py.File(path, "w") as f:
             for key in self.keys():
+                if key in ('_node_segment', '_edge_segment'):
+                    continue
                 print(f"Writing tensor {key}.")
                 f[key] = self[key].to('cpu')
 
             for key in self.attrs.keys():
+                if key in ('_node_segment', '_edge_segment'):
+                    continue
                 print(f"Writing attr {key}={self.attrs[key]}")
                 f.attrs[key] = self.attrs[key]
