@@ -38,74 +38,50 @@ def saveMol(batch, type_names=None, idx=0, workdir='', filename='tmp'):
     return filename
       
 def saveProtein(batch, workdir, idx=0, filename='tmp'):
-    codification = { "UNK" : 'X',
-                     "ALA" : 'A',
-                     "CYS" : 'C',
-                     "ASP" : 'D',
-                     "GLU" : 'E',
-                     "PHE" : 'F',
-                     "GLY" : 'G',
-                     "HIS" : 'H',
-                     "ILE" : 'I',
-                     "LYS" : 'K',
-                     "LEU" : 'L',
-                     "MET" : 'M',
-                     "ASN" : 'N',
-                     "PYL" : 'O',
-                     "PRO" : 'P',
-                     "GLN" : 'Q',
-                     "ARG" : 'R',
-                     "SER" : 'S',
-                     "THR" : 'T',
-                     "SEC" : 'U',
-                     "VAL" : 'V',
-                     "TRP" : 'W',
-                     "TYR" : 'Y' }
-    aa_ids = {i:key for i, key in enumerate(codification.keys())}
+    codification = ['ALA',
+    'ARG',
+    'ASP',
+    'ASN',
+    'CYS',
+    'GLU',
+    'GLN',
+    'GLY',
+    'HIS',
+    'ILE',
+    'LEU',
+    'LYS',
+    'MET',
+    'PHE',
+    'PRO',
+    'SER',
+    'THR',
+    'TRP',
+    'TYR',
+    'VAL', 'UNK']
+    aa_ids = {i:key for i, key in enumerate(codification)}
     def id2name(x):
-        if not x in list(range(1, 23)):
-            return 'GLY' # UNK is not displayed properly
         return aa_ids[x]
     filename = os.path.join(workdir, filename)+'.pdb'
+    item = batch[idx]
     with open(filename, "w") as f:
-        for i in range(batch['_n_nodes'][idx]):
-            j = [0]* 12
-            j[0] = 'ATOM'
-            j[0] = j[0].ljust(6)#atom#6s
-            
-            j[1] = f'{i+1}'
-            j[1] = j[1].rjust(5)#aomnum#5d
-            
-            j[2] = 'CA'
-            j[2] = j[2].center(4)#atomname$#4s
-            
-            j[3] = id2name(batch[idx]['species'][i].item())
-            j[3] = j[3].ljust(3)#resname#1s
-            
-            j[4] = 'A'
-            j[4] = j[4].rjust(1) #Astring
-            
-            if 'id' in batch:
-                tmp = batch[idx]['id'][i].item()
-                j[5] = f"{tmp}"
-            else:
-                j[5] = f'{i+1}'
-            j[5] = j[5].rjust(4) #resnum
-            
-            x, y, z = batch[idx]['pos'][i]
-            j[6] = str('%8.3f' % (float(x))).rjust(8) #x
-            j[7] = str('%8.3f' % (float(y))).rjust(8)#y
-            j[8] = str('%8.3f' % (float(z))).rjust(8) #z\
-            
-            j[9] = f'{1.0}'
-            j[9] =str('%6.2f'%(float(j[9]))).rjust(6)#occ
-            
-            j[10] = f'0.00'
-            j[10]=str('%6.2f'%(float(j[10]))).ljust(6)#temp
-            
-            j[11] = 'C'
-            j[11]=j[11].rjust(12)#elname    
-            f.write("%s%s %s %s %s%s    %s%s%s%s%s%s\n"%(j[0],j[1],j[2],j[3],j[4],j[5],j[6],j[7],j[8],j[9],j[10],j[11]))
+        for i in range(item['_n_nodes']):
+            for j, key in enumerate(['C', 'N', 'CA', 'O']):
+                # https://cupnet.net/pdb-format/
+                atom = 'ATOM'
+                atom_id = i*4+j
+                res = id2name(item['species'][i].item())
+                
+                if 'id' in item:
+                    res_id = item['id'][i].item()+1
+                else:
+                    res_id = i+1
+                x, y, z = item[key][i]
+                x, y, z = x.item(), y.item(), z.item()
+                chain_id = chr(ord('A')+item['chain_id'][i].item())
+
+                line = f"{atom:6s}{atom_id:5d} {key:^4s} {res:3s} {chain_id:1s}{res_id:4d}{'':1s}"
+                line += f"   {x:8.3f}{y:8.3f}{z:8.3f}{0:6.2f}{0:6.2f}          {key[0]:>2s}{'':2s}\n"
+                f.write(line)
         f.write('TER\nEND\n')
     return filename
 

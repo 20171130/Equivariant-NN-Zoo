@@ -16,19 +16,19 @@ def masked2indexed(batch):
     data['_n_nodes'] = sum(mask).view(-1, 1)
     data['species'] = batch['species'][mask]
     data['chain_id'] = batch['chain_id'][mask]
-    data['pos'] = batch['CA'][mask]
 
-    attrs = {'pos': ('node', '1x1o'), 'id': ('node', '1x0e')}
+    attrs = {'id': ('node', '1x0e')}
+    for atom in ['N', 'CA', 'C', 'O']:
+        data[atom] = batch[atom][mask]
+        
     attrs.update(batch.attrs)
-    for atom in ['N', 'CA', 'C', 'CB', 'O']:
-        attrs.pop(atom)
     return Batch(attrs, **data)
 
 def crop(data, attrs, max_nodes):
     if data['_n_nodes'] <= max_nodes:
         return data, attrs
     x = np.random.randint(data['_n_nodes'])
-    distance = data['pos'] - data['pos'][x]
+    distance = data['CA'] - data['CA'][x]
     distance = torch.linalg.norm(distance, dim=-1)
     
     def binarySearch(r_min, r_max):
@@ -50,7 +50,8 @@ def crop(data, attrs, max_nodes):
     data['id'] = data['id'][mask]
     data['species'] = data['species'][mask]
     data['chain_id'] = data['chain_id'][mask]
-    data['pos'] = data['pos'][mask]
+    for atom in ['N', 'CA', 'C', 'O']:
+        data[atom] = data[atom][mask]
     return data, attrs
   
 def criteria(data, edge_index):
