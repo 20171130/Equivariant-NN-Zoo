@@ -10,7 +10,8 @@ from torch import Tensor
 from e3nn.util.jit import compile_mode
 from typing import Optional, Dict, Tuple
 
-def computeEdgeVector(data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]], with_lengths: bool = True):
+def computeEdgeVector(data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]],
+                      key='pos', with_lengths: bool = True):
     """Compute the edge displacement vectors for a graph.
 
     If ``data.pos.requires_grad`` and/or ``data.cell.requires_grad``, this
@@ -26,10 +27,10 @@ def computeEdgeVector(data: Dict[str, Tensor], attrs:Dict[str, Tuple[str, str]],
             data["edge_length"] = torch.linalg.norm(data["edge_vector"], dim=-1)
         return data, attrs
     else:
-        pos = data["pos"]
+        pos = data[key]
         edge_index = data["edge_index"]
         edge_vec = pos[edge_index[1]] - pos[edge_index[0]]
-        data["edge_vector"] = edge_vec
+        data["edge_vector"] = edge_vec.to(pos.device)
         if with_lengths:
             data["edge_length"] = torch.linalg.norm(edge_vec, dim=-1)
         return data, attrs
@@ -39,6 +40,7 @@ def computeEdgeIndex(
     data,
     attrs,
     r_max: float = None,
+    key = 'pos',
     criteria = None
 ):
     """
@@ -47,7 +49,7 @@ def computeEdgeIndex(
     Zero-pad the features for new edges.
     """
 
-    pos = data["pos"]
+    pos = data[key]
     pos = torch.as_tensor(pos, dtype=torch.get_default_dtype())        
     
     # per graph fully connected
@@ -106,6 +108,6 @@ def computeEdgeIndex(
     data["_n_edges"] = n_edges
     
     data = {}
-    data["edge_index"] = edge_index
+    data["edge_index"] = edge_index.to(pos.device)
     
     return data, attrs

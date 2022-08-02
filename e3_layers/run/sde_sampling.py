@@ -7,14 +7,12 @@ import abc
 from tqdm import trange
 
 from models.utils import from_flattened_numpy, to_flattened_numpy
-from .sde_utils import get_score_fn, getScaler, VPSDE
+from .sde_utils import get_score_fn, VPSDE
 from scipy import integrate
 from models import utils as mutils
-from torch_runstats.scatter import scatter
 
 _CORRECTORS = {}
 _PREDICTORS = {}
-
 
 def register_predictor(cls=None, *, name=None):
   """A decorator for registering predictor classes."""
@@ -65,11 +63,11 @@ def get_corrector(name):
 class Predictor(abc.ABC):
   """The abstract class for a predictor algorithm."""
 
-  def __init__(self, sde, score_fn, probability_flow=False):
+  def __init__(self, sde, score_fn):
     super().__init__()
     self.sde = sde
     # Compute the reverse SDE/ODE
-    self.rsde = sde.reverse(score_fn, probability_flow)
+    self.rsde = sde.reverse(score_fn)
     self.score_fn = score_fn
 
   @abc.abstractmethod
@@ -99,27 +97,18 @@ class Corrector(abc.ABC):
 
 @register_predictor(name='euler_maruyama')
 class EulerMaruyamaPredictor(Predictor):
-  def __init__(self, sde, score_fn, probability_flow=False):
-    super().__init__(sde, score_fn, probability_flow)
+  def __init__(self, sde, score_fn):
+    super().__init__(sde, score_fn)
 
   def update_fn(self, batch):
-    x, t = batch['pos'], batch['t']
-    dt = -1. / self.rsde.N
-    z = torch.randn_like(x)
-    drift, diffusion = self.rsde.sde(batch)
-    x_mean = x + drift * dt
-    x = x_mean + diffusion * np.sqrt(-dt) * z
-    batch['pos'] = x
-    batch.attrs['pos_mean'] = ('node', '1x1o')
-    batch['pos_mean'] = x_mean
+    batch = self.rsde.sde(batch)
     return batch
-
 
 @register_predictor(name='none')
 class NonePredictor(Predictor):
   """An empty predictor that does nothing."""
 
-  def __init__(self, sde, score_fn, probability_flow=False):
+  def __init__(self, sde, score_fn):
     pass
 
   def update_fn(self, batch):
@@ -152,7 +141,6 @@ class LangevinCorrector(Corrector):
      # print(f'inner product{(grad*x).sum(dim=-1).mean()}')
       x = x_mean + torch.sqrt(step_size * 2)* noise
     batch['pos'] = x
-    batch['pos_mean'] = x_mean
     return batch
 
 
@@ -167,20 +155,20 @@ class NoneCorrector(Corrector):
     return batch
   
 
-def shared_predictor_update_fn(batch, sde, model, predictor, probability_flow, continuous):
+def shared_predictor_update_fn(batch, sde, model, predictor, continuous):
   """A wrapper that configures and returns the update function of predictors."""
-  score_fn = get_score_fn(sde, model, train=False, continuous=continuous)
+  score_fn = get_score_fn(sde, model, train=False)
   if predictor is None:
     # Corrector-only sampler
-    predictor_obj = NonePredictor(sde, score_fn, probability_flow)
+    predictor_obj = NonePredictor(sde, score_fn)
   else:
-    predictor_obj = predictor(sde, score_fn, probability_flow)
+    predictor_obj = predictor(sde, score_fn)
   return predictor_obj.update_fn(batch)
 
 
 def shared_corrector_update_fn(batch, sde, model, corrector, continuous, snr, n_steps):
   """A wrapper tha configures and returns the update function of correctors."""
-  score_fn = get_score_fn(sde, model, train=False, continuous=continuous)
+  score_fn = get_score_fn(sde, model, train=False)
     
   if corrector is None:
     # Predictor-only sampler
@@ -191,8 +179,7 @@ def shared_corrector_update_fn(batch, sde, model, corrector, continuous, snr, n_
 
 
 def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
-                   n_steps=1, probability_flow=False, continuous=False,
-                   denoise=True, eps=1e-3):
+                   n_steps=1, continuous=False, eps=1e-3):
   """Create a Predictor-Corrector (PC) sampler.
 
   Args:
@@ -216,7 +203,6 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
   predictor_update_fn = functools.partial(shared_predictor_update_fn,
                                           sde=sde,
                                           predictor=predictor,
-                                          probability_flow=probability_flow,
                                           continuous=continuous)
   corrector_update_fn = functools.partial(shared_corrector_update_fn,
                                           sde=sde,
@@ -235,34 +221,27 @@ def get_pc_sampler(sde, predictor, corrector, inverse_scaler, snr,
       Samples, number of function evaluations.
     """
     
-    clean_batch = batch.clone()
-    clean_batch.attrs['t'] = ('graph', '1x0e')
-      
-    shape = batch['pos'].shape
-    device = batch['pos'].device
-      
+    batch = batch.clone()
+    batch.attrs['t'] = ('graph', '1x0e')
     # Initial sample
-    x = sde.prior_sampling(shape).to(device)
-    timesteps = torch.linspace(sde.T, eps, sde.N, device=device)
+    batch = sde.prior_sampling(batch).to(batch.device)
+    timesteps = torch.linspace(sde.T, eps, sde.N, device=batch.device)
 
     with torch.no_grad():
       for i in trange(sde.N):
         t = timesteps[i]
         vec_t = torch.ones(len(batch), device=t.device) * t
+        batch['t'] = t
 
-        batch = clean_batch.clone()
-        batch.update({'t': vec_t, 'pos':x})
-        result = corrector_update_fn(batch, model=model)
-        x = result['pos'].detach()
+        batch = corrector_update_fn(batch, model=model)
+        batch.pop('edge_index')
+        batch.pop('edge_vector')
 
-        batch = clean_batch.clone()
-        batch.update({'t': vec_t, 'pos':x})
-        result = predictor_update_fn(batch, model=model)
-        x = result['pos'].detach()
+        batch = predictor_update_fn(batch, model=model)
+        batch.pop('edge_index')
+        batch.pop('edge_vector')
       
-    if denoise:
-      result['pos'] = result['pos_mean']
-    return inverse_scaler(result), sde.N * (n_steps + 1)
+    return inverse_scaler(batch), sde.N * (n_steps + 1)
 
   return pc_sampler
   
@@ -300,9 +279,7 @@ def get_sampling_fn(config, sde, inverse_scaler, eps):
                                  inverse_scaler=inverse_scaler,
                                  snr=config.sampling.snr,
                                  n_steps=config.sampling.n_steps_each,
-                                 probability_flow=config.sampling.probability_flow,
                                  continuous=config.training.continuous,
-                                 denoise=config.sampling.noise_removal,
                                  eps=eps,)
   else:
     raise ValueError(f"Sampler name {sampler_name} unknown.")

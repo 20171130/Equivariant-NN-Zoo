@@ -28,6 +28,7 @@ class Data(object):
         """
         self.attrs = attrs
         self.data = {}
+        self.device = None
         for key, value in tensors.items():
             self[key] = value
 
@@ -171,6 +172,7 @@ class Data(object):
         :obj:`*keys`.
         If :obj:`*keys` is not given, the conversion is applied to all present
         attributes."""
+        self.device = device
         return self.apply(lambda x: x.to(device, **kwargs), *self.keys())
 
     def cpu(self):
@@ -189,19 +191,27 @@ class Data(object):
 
     def clone(self):
         r"""Performs a deep-copy of the data object."""
-        return self.__class__(
+        result = self.__class__(
             copy.deepcopy(self.attrs),
             **{
                 k: v.clone() if torch.is_tensor(v) else copy.deepcopy(v)
                 for k, v in self.data.items()
             },
         )
+        result.to(self.device)
+        return result
 
     def pin_memory(self):
         r"""Copies all attributes :obj:`*keys` to pinned memory.
         If :obj:`*keys` is not given, the conversion is applied to all present
         attributes."""
         return self.apply(lambda x: x.pin_memory(), *self.keys())
+      
+    def pop(self, key):
+        if key in self.data:
+            self.data.pop(key)
+        if key in self.attrs:
+            self.attrs.pop(key)
 
     def __repr__(self):
         attrs = self.attrs

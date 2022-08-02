@@ -2,8 +2,38 @@ from ml_collections.config_dict import ConfigDict
 import inspect
 from e3nn import o3
 import torch
-
+from torch_runstats.scatter import scatter
 import math
+
+  
+def getScaler(operations):
+  """
+  This function normalizes data by scaling and shifting.
+  Example args: [('N', ('shift', 'CA', '-1')), ('CA', ('scale', 25))]
+  """
+  def scaler(batch):
+    node_segment = batch.nodeSegment()
+    for ops in operations:
+      key, op = ops
+      if op[0] == 'scale':
+        batch[key] = batch[key]*op[1]
+      elif op[0] == 'shift':
+        if op[1] == 'mean':
+          n_nodes = batch['_n_nodes'].view(-1, 1)
+          center = scatter(batch[key], node_segment, dim=0, reduce='sum')
+          center = center/n_nodes
+          batch[key] = batch[key] - center[node_segment]
+        elif op[1] in batch:
+          sign = 1
+          if len(op) == 3:
+            sign = op[2]
+          batch[key] = batch[key] + sign * batch[op[1]]
+        else:
+          raise ValueError()
+      else:
+        raise ValueError()
+    return batch
+  return scaler
 
 def insertAfter(lst, key, item):
     for i, layer in enumerate(lst):

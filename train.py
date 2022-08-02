@@ -71,7 +71,6 @@ def train_diffusion(e3_config, FLAGS):
   import likelihood as likelihood
   import e3_layers.run.sde_utils as losses
   import e3_layers.run.sde_utils as sde_lib
-  from e3_layers.run.sde_utils import getScaler
   import e3_layers.run.sde_sampling as sampling
   """Runs the training pipeline.
 
@@ -112,17 +111,8 @@ def train_diffusion(e3_config, FLAGS):
   initial_step = int(state['step'])
 
   # Setup SDEs
-  if sde_config.training.sde.lower() == 'vpsde':
-    sde = sde_lib.VPSDE(beta_min=sde_config.model.beta_min, beta_max=sde_config.model.beta_max, N=sde_config.model.num_scales)
-    sampling_eps = 1e-3
-  elif sde_config.training.sde.lower() == 'subvpsde':
-    sde = sde_lib.subVPSDE(beta_min=sde_config.model.beta_min, beta_max=sde_config.model.beta_max, N=sde_config.model.num_scales)
-    sampling_eps = 1e-3
-  elif sde_config.training.sde.lower() == 'vesde':
-    sde = sde_lib.VESDE(sigma_min=sde_config.model.sigma_min, sigma_max=sde_config.model.sigma_max, N=sde_config.model.num_scales)
-    sampling_eps = 1e-5
-  else:
-    raise NotImplementedError(f"SDE {sde_config.training.sde} unknown.")
+  sde = sde_lib.VPSDE(beta_min=sde_config.model.beta_min, beta_max=sde_config.model.beta_max, N=sde_config.model.num_scales, diffusion_keys=e3_config.diffusion_keys)
+  sampling_eps = 1e-3
 
   # Build one-step training and evaluation functions
   continuous = sde_config.training.continuous
@@ -141,8 +131,8 @@ def train_diffusion(e3_config, FLAGS):
   
   # Create data normalizer and its inverse
   std = getattr(e3_config.data_config, 'std', 1)
-  scaler = getScaler(1/std)
-  inverse_scaler = getScaler(std)
+  scaler = e3_config.data_config.scaler
+  inverse_scaler = e3_config.data_config.inverse_scaler
   
   # Building sampling functions
   if sde_config.training.snapshot_sampling:
@@ -170,33 +160,41 @@ def train_diffusion(e3_config, FLAGS):
     batch = scaler(batch)
     # Execute one training step
     
-    loss = train_step_fn(state, batch).item()
-    loss_lst.append(loss)
+    loss, losses = train_step_fn(state, batch)
+    loss_lst.append(losses)
     if step % FLAGS.log_period == 0 and step>0:
-      logging.info("step: %d, training_loss: %.5e" % (step, sum(loss_lst)/len(loss_lst)))
-      wandb.log(dict(loss = sum(loss_lst)/len(loss_lst), optim_step = step))
+      loss_dict = {}
+      for key in loss_lst[0]:
+        loss_dict[key] = sum([item[key] for item in loss_lst])/len(loss_lst)
+      logging.info("step: %d, training_loss: %.5e" % (step, loss_dict['total']))
+      loss_dict['optim_step'] = step
+      wandb.log(loss_dict)
       loss_lst = []
 
     # Report the loss on an evaluation dataset periodically
     if step % FLAGS.eval_period == 0:
       eval_batch = next(eval_iter).to(device)
       eval_batch = scaler(eval_batch)
-      eval_loss = eval_step_fn(state, eval_batch).item()
+      _, eval_loss = eval_step_fn(state, eval_batch)
       eval_loss_lst.append(eval_loss)
       
     # Save a checkpoint periodically and generate samples if needed
     if (step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps) and dist.get_rank()==0:
+      # Save the checkpoint.
+      save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{step}.pth'), state)
+      
       if len(eval_loss_lst)> 0:
-        eval_loss_mean = sum(eval_loss_lst)/len(eval_loss_lst)
+        loss_dict = {}
+        for key in eval_loss_lst[0]:
+          loss_dict[f'{key}_val'] = sum([item[key] for item in eval_loss_lst])/len(eval_loss_lst)
+        eval_loss_mean = loss_dict['total_val']
       else:
         eval_loss_mean = float('inf')
       logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss_mean))
       lr_sched.step(metrics=eval_loss_mean)
       eval_loss_lst = []
-      wandb.log(dict(eval_loss = eval_loss_mean, lr = optimizer.param_groups[0]["lr"], optim_step = step))
-      
-      # Save the checkpoint.
-      save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{step}.pth'), state)
+      loss_dict.update(dict(lr = optimizer.param_groups[0]["lr"], optim_step = step))
+      wandb.log(loss_dict)
 
       # Generate and save samples
       if sde_config.training.snapshot_sampling:
@@ -211,7 +209,7 @@ def train_diffusion(e3_config, FLAGS):
 
         n_samples = 1
         lst = [batch[0] for i in range(n_samples)]
-        batch = Batch.from_data_list(lst, batch.attrs)
+        batch = Batch.from_data_list(lst, batch.attrs).to(batch.device)
         samples_batch, n = sampling_fn(score_model, batch)
         filename = f'{step}'
         filenmae = saveMol(samples_batch, idx=0, workdir=FLAGS.workdir, filename=filename)

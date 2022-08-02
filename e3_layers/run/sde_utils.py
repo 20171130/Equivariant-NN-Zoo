@@ -28,8 +28,8 @@ def get_optimizer(config, params):
   return optimizer
 
 
-class VPSDE(SDE):
-  def __init__(self, beta_min=0.1, beta_max=20, N=1000):
+class VPSDE():
+  def __init__(self, diffusion_keys, beta_min=0.1, beta_max=20, N=1000):
     """Construct a Variance Preserving SDE.
 
     Args:
@@ -37,7 +37,6 @@ class VPSDE(SDE):
       beta_max: value of beta(1)
       N: number of discretization steps
     """
-    super().__init__(N)
     self.beta_0 = beta_min
     self.beta_1 = beta_max
     self.N = N
@@ -46,33 +45,47 @@ class VPSDE(SDE):
     self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
     self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
     self.sqrt_1m_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
+    self.irreps = diffusion_keys # a dict {diffused_key: dim}
 
   @property
   def T(self):
     return 1
 
-  def marginal_prob(self, x, t):
+  def marginal(self, batch, return_std=False):
+    t = batch['t'][batch.nodeSegment()]
     log_mean_coeff = -0.25 * t ** 2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
-    mean = torch.exp(log_mean_coeff) * x
     std = torch.sqrt(1. - torch.exp(2. * log_mean_coeff))
-    return mean, std
+    if return_std:
+      return std
+    zs = {}
+    for key in self.irreps.keys():
+      mean = torch.exp(log_mean_coeff) * batch[key] 
+      z = torch.randn_like(batch[key])
+      batch[key] = mean + std*z
+      zs[key] = z
+    return batch, {'zs':zs, 'std':std}
 
-  def sde(self, x, t):
+  def sde(self, batch, dt=None):
+    if dt is None:
+      dt = 1. / self.N
+    t = batch['t']
     beta_t = self.beta_0 + t * (self.beta_1 - self.beta_0)
-    drift = -0.5 * beta_t * x
     diffusion = torch.sqrt(beta_t)
-    return drift, diffusion
+    for key in self.irreps.keys():
+      x = batch[key]
+      drift = -0.5 * beta_t * x
+      x_mean = x + drift * dt
+      z = torch.randn_like(x)
+      x = x_mean + diffusion * np.sqrt(abs(dt)) * z
+      batch[key] = x
+    return batch.to(batch.device)
   
-  def prior_sampling(self, shape):
-    return torch.randn(*shape)
-
-  def prior_logp(self, z):
-    shape = z.shape
-    N = np.prod(shape[1:])
-    logps = -N / 2. * np.log(2 * np.pi) - torch.sum(z ** 2, dim=(1, 2, 3)) / 2.
-    return logps
+  def prior_sampling(self, batch):
+    for key, dim in self.irreps.items():
+      batch[key] = torch.randn((batch['_n_nodes'].sum(), dim))
+    return batch
   
-  def reverse(self, score_fn, probability_flow=False):
+  def reverse(self, score_fn):
     """Create the reverse-time SDE/ODE.
 
     Args:
@@ -82,13 +95,13 @@ class VPSDE(SDE):
     N = self.N
     T = self.T
     sde_fn = self.sde
-    discretize_fn = self.discretize
+    beta_0, beta_1 = self.beta_0, self.beta_1
+    irreps = self.irreps
 
     # Build the class for reverse-time SDE.
     class RSDE(self.__class__):
       def __init__(self):
         self.N = N
-        self.probability_flow = probability_flow
 
       @property
       def T(self):
@@ -96,28 +109,18 @@ class VPSDE(SDE):
 
       def sde(self, batch):
         """Create the drift and diffusion functions for the reverse SDE/ODE."""
-        drift, diffusion = sde_fn(batch['pos'], batch['t'][batch.nodeSegment()])
-        score = score_fn(batch)['score']
-        drift = drift - diffusion ** 2 * score * (0.5 if self.probability_flow else 1.)
-        # Set the diffusion function to zero for ODEs.
-        diffusion = 0. if self.probability_flow else diffusion
-        return drift, diffusion
+        scores = score_fn(batch)
+        t = batch['t'][batch.nodeSegment()]
+        beta_t = beta_0 + t * (beta_1 - beta_0)
+        diffusion = torch.sqrt(beta_t)
+        dt = -1. / self.N
+        batch = sde_fn(batch, dt)
+        for key in irreps:          
+          batch[key] = batch[key] - dt * diffusion ** 2 * scores[f'score_{key}']
+        batch = batch.to(batch.device)
+        return batch
 
     return RSDE()
-  
-  
-def getScaler(scale):
-  def scaler(batch):
-    pos = batch['pos']
-    device = pos.device
-    node_segment = batch.nodeSegment().to(device)
-    n_nodes = batch['_n_nodes'].view(-1, 1)
-    center = scatter(pos, node_segment, dim=0, reduce='sum')
-    center = center/n_nodes
-    pos = pos - center[node_segment]
-    batch['pos'] = pos*scale
-    return batch
-  return scaler
 
 def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_weighting=True, eps=1e-5):
   """Create a loss function for training with arbirary SDEs.
@@ -148,43 +151,38 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
       loss: A scalar that represents the average loss value across the mini-batch.
     """
     
-    device = batch['pos'].device
-    t = torch.rand(len(batch), device=device) * (sde.T - eps) + eps
-    z = torch.randn_like(batch['pos'])
-
-    node_segment = batch.nodeSegment().to(device)
-    mean, std = sde.marginal_prob(batch['pos'], t[batch.nodeSegment()].unsqueeze(-1))
-    perturbed_data = mean + std * z
-    score_fn = get_score_fn(sde, model, train, continuous)
+    t = torch.rand(len(batch), device=batch.device) * (sde.T - eps) + eps
+    score_fn = get_score_fn(sde, model, train)
     
     batch_perturbed = batch.clone()
-    batch_perturbed['pos'] = perturbed_data.to(device)
     batch_perturbed.attrs['t'] = ('graph', '1x0e')
     batch_perturbed['t'] = t
-    score = score_fn(batch_perturbed)['score']
-    if not likelihood_weighting:
-      losses = torch.square(score*std + z)
-      losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
-    else:
-      g2 = sde.sde(torch.zeros_like(z), t[batch.nodeSegment()].unsqueeze(-1))[1] ** 2
-      losses = torch.square(score+ z / std)
-      losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2 * 0.01
+    batch_perturbed, misc = sde.marginal(batch_perturbed)
     
-    loss = torch.mean(losses)
-    return loss
+    scores = score_fn(batch_perturbed)
+    losses = {}
+    for key in sde.irreps.keys():
+      loss = torch.square(scores[f'score_{key}']*misc['std'] + misc['zs'][key])
+      loss = reduce_op(loss.reshape(loss.shape[0], -1), dim=-1)
+      loss = torch.mean(loss)
+      losses[key] = loss
+    total_loss = sum(losses.values())
+    losses['total'] = total_loss
+    return total_loss, losses
 
   return loss_fn
 
 
-def get_score_fn(sde, model, train=False, continuous=False):
+def get_score_fn(sde, model, train=False):
   def score_fn(batch):
     if train:
       model.train()
     else:
       model.eval()
     result = model(batch)
-    std = sde.marginal_prob(torch.zeros_like(batch['pos']), batch['t'][batch.nodeSegment()])[1]
-    result['score'] = -result['score'] / std - batch['pos']
+    std = sde.marginal(batch, return_std=True)
+    for key in sde.irreps.keys():
+      result[f'score_{key}'] = -result[f'score_{key}'] / std - batch[key]
     return result
   return score_fn
 
@@ -233,7 +231,7 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
     model = state['model']
     if train:
       optimizer = state['optimizer']
-      loss = loss_fn(model, batch)
+      loss, losses = loss_fn(model, batch)
       loss.backward()
       if not grad_clid_norm is None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clid_norm)
@@ -252,9 +250,9 @@ def get_step_fn(sde, train, optimizer=None, reduce_mean=False, continuous=True,
       ema = state['ema']
       ema.store(model.parameters())
       ema.copy_to(model.parameters())
-      loss = loss_fn(model, batch)
+      loss, losses = loss_fn(model, batch)
       ema.restore(model.parameters())
 
-    return loss
+    return loss.item(), {key:value.item() for key, value in losses.items()}
 
   return step_fn

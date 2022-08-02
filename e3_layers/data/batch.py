@@ -165,7 +165,7 @@ class Batch(Data):
         batch = []
         for i, n in enumerate(self["_n_nodes"]):
             batch += [i] * n
-        batch = torch.tensor(batch)
+        batch = torch.tensor(batch, device=self.device)
         self.data["_node_segment"] = batch
         return self.data["_node_segment"]
       
@@ -173,7 +173,7 @@ class Batch(Data):
         batch = []
         for i, n in enumerate(self["_n_edges"]):
             batch += [i] * n
-        batch = torch.tensor(batch)
+        batch = torch.tensor(batch, device=self.device)
         self.data["_edge_segment"] = batch
         return self.data["_edge_segment"]
 

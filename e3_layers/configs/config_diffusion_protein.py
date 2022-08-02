@@ -1,10 +1,10 @@
 from functools import partial
-from ..data import computeEdgeIndex, Batch
+from ..data import computeEdgeIndex, computeEdgeVector, Batch
 from ml_collections.config_dict import ConfigDict
 import ase
 from .layer_configs import featureModel, addForceOutput, addEnergyOutput
 from ..nn import PointwiseLinear, RadialBasisEncoding, Broadcast, RelativePositionEncoding, Concat, symmetricCutoff
-from ..utils import insertAfter, saveProtein
+from ..utils import insertAfter, replace, saveProtein, getScaler
 import torch
 import numpy as np
 
@@ -83,6 +83,7 @@ def get_config(spec=''):
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
+    config.diffusion_keys = {'CA':3, 'C':3, 'O':3, 'N':3}
     
     model.n_dim = 64
     model.l_max = 2
@@ -96,9 +97,13 @@ def get_config(spec=''):
     data.n_train = 0.9
     data.n_val = 0.1
     data.std = 25.83
+    data.scaler = getScaler([('C', ('shift', 'CA', -1)), ('N', ('shift', 'CA', -1)), ('O', ('shift', 'CA', -1)),
+                            ('CA', ('shift', 'mean')), ('CA', ('scale',  1/data.std))])
+    data.inverse_scaler = getScaler([('CA', ('scale', data.std)), ('C', ('shift', 'CA')), ('N', ('shift', 'CA')), ('O', ('shift', 'CA'))])
     data.train_val_split = "random"
     data.shuffle = True
     data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
+ #   data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
     data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
     data.key_map = {}
 
@@ -119,7 +124,9 @@ def get_config(spec=''):
         avg_num_neighbors=100,
         normalize=True
     )
-    
+    layer_configs.layers = replace(layer_configs.layers, 'edge_vector', ('edge_vector', partial(computeEdgeVector, key='CA')))
+        
+        
     relative_position = {
         "module": RadialBasisEncoding,
         "r_max": 150,
@@ -159,18 +166,27 @@ def get_config(spec=''):
               'irreps_out':(model.node_attrs, "node_attrs")})
     layer_configs.layers = insertAfter(layer_configs.layers, 'graph2node', concat)
     
+    concat = ('concat3', {'module': Concat,
+              'node_features':(layer_configs.node_features, "node_features"),
+              'C':(f"1x1o", "C"),
+              'N':(f"1x1o", "N"),
+              'O':(f"1x1o", "O"),
+              'irreps_out':(layer_configs.node_features, "node_features")})
+    layer_configs.layers = insertAfter(layer_configs.layers, 'layer3', concat)
     
-    layer_configs.layers.append(
-        (
-            "score_output",
-            {
-                "module": PointwiseLinear,
-                "irreps_in": (features, "node_features"),
-                "irreps_out": (f"1x1o", "score"),
-            },
+    for key in ['CA', 'C', 'N', 'O']:
+        layer_configs.layers.append(
+            (
+                f"score_{key}",
+                {
+                    "module": PointwiseLinear,
+                    "irreps_in": (features, "node_features"),
+                    "irreps_out": (f"1x1o", f"score_{key}"),
+                },
+            )
         )
-    )
-    layer_configs.layers = [('edge_index', partial(computeEdgeIndex, r_max=8.0/data.std, criteria=criteria))] + layer_configs.layers
+    layer_configs.layers = [('edge_index', partial(computeEdgeIndex, r_max=8.0/data.std, key='CA',
+                                                   criteria=criteria))] + layer_configs.layers
     model.update(layer_configs)
 
     return config
