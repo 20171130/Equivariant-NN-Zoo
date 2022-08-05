@@ -66,6 +66,8 @@ def saveProtein(batch, workdir, idx=0, filename='tmp'):
     with open(filename, "w") as f:
         for i in range(item['_n_nodes']):
             for j, key in enumerate(['C', 'N', 'CA', 'O']):
+                if not key in item:
+                  continue
                 # https://cupnet.net/pdb-format/
                 atom = 'ATOM'
                 atom_id = i*4+j

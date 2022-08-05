@@ -12,11 +12,16 @@ def getScaler(operations):
   Example args: [('N', ('shift', 'CA', '-1')), ('CA', ('scale', 25))]
   """
   def scaler(batch):
+    batch = batch.clone()
     node_segment = batch.nodeSegment()
     for ops in operations:
       key, op = ops
       if op[0] == 'scale':
-        batch[key] = batch[key]*op[1]
+        if isinstance(key, tuple) or isinstance(key, list):
+          for tmp in key:
+            batch[tmp] = batch[tmp]*op[1]
+        else:
+          batch[key] = batch[key]*op[1]
       elif op[0] == 'shift':
         if op[1] == 'mean':
           n_nodes = batch['_n_nodes'].view(-1, 1)

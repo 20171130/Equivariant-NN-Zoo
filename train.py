@@ -188,13 +188,11 @@ def train_diffusion(e3_config, FLAGS):
         for key in eval_loss_lst[0]:
           loss_dict[f'{key}_val'] = sum([item[key] for item in eval_loss_lst])/len(eval_loss_lst)
         eval_loss_mean = loss_dict['total_val']
-      else:
-        eval_loss_mean = float('inf')
-      logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss_mean))
-      lr_sched.step(metrics=eval_loss_mean)
-      eval_loss_lst = []
-      loss_dict.update(dict(lr = optimizer.param_groups[0]["lr"], optim_step = step))
-      wandb.log(loss_dict)
+        logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss_mean))
+        lr_sched.step(metrics=eval_loss_mean)
+        eval_loss_lst = []
+        loss_dict.update(dict(lr = optimizer.param_groups[0]["lr"], optim_step = step))
+        wandb.log(loss_dict)
 
       # Generate and save samples
       if sde_config.training.snapshot_sampling:

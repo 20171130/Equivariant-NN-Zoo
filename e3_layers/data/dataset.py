@@ -114,8 +114,7 @@ class CondensedDataset(Batch):
                 else:
                     tensors, attrs = data.data, data.attrs
                     tensors, attrs = func(tensors, attrs)
-                    data.data.update(tensors)
-                    data.attrs.update(attrs)
+                    data.data, data.attrs = tensors, attrs
             return data
         else:
             dataset = self.index_select(idx)

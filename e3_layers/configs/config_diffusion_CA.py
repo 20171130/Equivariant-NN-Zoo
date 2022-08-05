@@ -20,7 +20,6 @@ def masked2indexed(batch):
     attrs = {'id': ('node', '1x0e')}
     for atom in ['N', 'CA', 'C', 'O']:
         data[atom] = batch[atom][mask]
-        
     attrs.update(batch.attrs)
     return Batch(attrs, **data)
 
@@ -52,6 +51,10 @@ def crop(data, attrs, max_nodes):
     data['chain_id'] = data['chain_id'][mask]
     for atom in ['N', 'CA', 'C', 'O']:
         data[atom] = data[atom][mask]
+        
+    for key in ['N', 'C', 'O']:
+        data.pop(key)
+        attrs.pop(key)
     return data, attrs
   
 def criteria(data, edge_index):
@@ -68,7 +71,7 @@ def get_config(spec=''):
     config.data_config = data
     config.model_config = model
 
-    config.learning_rate = 5e-3
+    config.learning_rate = 1e-2
     config.batch_size = 4
     config.grad_acc = 4
     
@@ -83,7 +86,8 @@ def get_config(spec=''):
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
-    config.diffusion_keys = {'CA':3, 'C':3, 'O':3, 'N':3}
+    #config.diffusion_keys = {'CA':3, 'C':3, 'O':3, 'N':3}
+    config.diffusion_keys = {'CA':3}#, 'C':3, 'O':3, 'N':3}
     
     model.n_dim = 64
     model.l_max = 2
@@ -97,13 +101,12 @@ def get_config(spec=''):
     data.n_train = 0.9
     data.n_val = 0.1
     data.std = 25.83
-    data.scaler = getScaler([('C', ('shift', 'CA', -1)), ('N', ('shift', 'CA', -1)), ('O', ('shift', 'CA', -1)),
-                            ('CA', ('shift', 'mean')), ('CA', ('scale',  1/data.std))])
-    data.inverse_scaler = getScaler([('CA', ('scale', data.std)), ('C', ('shift', 'CA')), ('N', ('shift', 'CA')), ('O', ('shift', 'CA'))])
+    data.scaler = getScaler([('CA', ('shift', 'mean')), ('CA', ('scale',  1/data.std))])
+    data.inverse_scaler = getScaler([('CA', ('scale', data.std))])
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
- #   data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
+ #   data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
+    data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
     data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
     data.key_map = {}
 
@@ -125,7 +128,6 @@ def get_config(spec=''):
         normalize=True
     )
     layer_configs.layers = replace(layer_configs.layers, 'edge_vector', ('edge_vector', partial(computeEdgeVector, key='CA')))
-        
         
     relative_position = {
         "module": RadialBasisEncoding,
@@ -166,6 +168,7 @@ def get_config(spec=''):
               'irreps_out':(model.node_attrs, "node_attrs")})
     layer_configs.layers = insertAfter(layer_configs.layers, 'graph2node', concat)
     
+    """
     concat = ('concat3', {'module': Concat,
               'node_features':(layer_configs.node_features, "node_features"),
               'C':(f"1x1o", "C"),
@@ -173,8 +176,9 @@ def get_config(spec=''):
               'O':(f"1x1o", "O"),
               'irreps_out':(layer_configs.node_features, "node_features")})
     layer_configs.layers = insertAfter(layer_configs.layers, 'layer3', concat)
+    """
     
-    for key in ['CA', 'C', 'N', 'O']:
+    for key in config.diffusion_keys:
         layer_configs.layers.append(
             (
                 f"score_{key}",
