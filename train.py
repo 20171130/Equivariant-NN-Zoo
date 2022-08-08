@@ -212,8 +212,10 @@ def train_diffusion(e3_config, FLAGS):
         samples_batch, n = sampling_fn(score_model, batch)
         filename = f'{step}'
         filenmae = saveMol(samples_batch, idx=0, workdir=FLAGS.workdir, filename=filename)
-        wandb.log({'sample': wandb.Molecule(filenmae), 'optim_step' : step})
-
+        def distMat(x):
+          return torch.linalg.norm(x.unsqueeze(1) - x, dim = -1)
+        error = (distMat(samples_batch['CA']) - distMat(inverse_scaler(batch)['CA'])).abs().mean()
+        wandb.log({'sample': wandb.Molecule(filenmae), 'optim_step' : step, 'error': error})
 
 def main(rank):
   torch.cuda.set_device(rank)

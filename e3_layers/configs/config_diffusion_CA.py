@@ -103,8 +103,8 @@ def get_config(spec=''):
     data.inverse_scaler = getScaler([('CA', ('scale', data.std))])
     data.train_val_split = "random"
     data.shuffle = True
-    data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
-  #  data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
+  #  data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
+    data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
     data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
     data.key_map = {}
 

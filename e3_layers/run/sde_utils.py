@@ -61,7 +61,8 @@ class VPSDE():
     for key in self.irreps.keys():
       mean = torch.exp(log_mean_coeff) * batch[key] 
       z = torch.randn_like(batch[key])
-      batch[key] = mean + std*z
+      new = mean + std*z
+      batch[key] = new
       zs[key] = z
     return batch, {'zs':zs, 'std':std}
 
@@ -77,12 +78,19 @@ class VPSDE():
       x_mean = x + drift * dt
       z = torch.randn_like(x)
       x = x_mean + diffusion * np.sqrt(abs(dt)) * z
-      batch[key] = x
+      if f'{key}_sampling_mask' in batch:
+        batch[key] = batch[key]*(1-batch[f'{key}_sampling_mask']) +batch[f'{key}_sampling_mask'] * x
+      else:
+        batch[key] = x
     return batch.to(batch.device)
   
   def prior_sampling(self, batch):
     for key, dim in self.irreps.items():
-      batch[key] = torch.randn((batch['_n_nodes'].sum(), dim))
+      new = torch.randn((batch['_n_nodes'].sum(), dim), device=batch.device)
+      if f'{key}_sampling_mask' in batch:
+        batch[key] = batch[key]*(1-batch[f'{key}_sampling_mask']) +batch[f'{key}_sampling_mask'] * new
+      else:
+        batch[key] = new
     return batch
   
   def reverse(self, score_fn):
@@ -115,8 +123,12 @@ class VPSDE():
         diffusion = torch.sqrt(beta_t)
         dt = -1. / self.N
         batch = sde_fn(batch, dt)
-        for key in irreps:          
-          batch[key] = batch[key] - dt * diffusion ** 2 * scores[f'score_{key}']
+        for key in irreps:    
+          new = batch[key] - dt * diffusion ** 2 * scores[f'score_{key}']
+          if f'{key}_sampling_mask' in batch:
+            batch[key] = batch[key]*(1-batch[f'{key}_sampling_mask']) +batch[f'{key}_sampling_mask'] * new
+          else:
+            batch[key] = new
         batch = batch.to(batch.device)
         return batch
 
