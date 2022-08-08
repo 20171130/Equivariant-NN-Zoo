@@ -24,6 +24,9 @@ def masked2indexed(batch):
     return Batch(attrs, **data)
 
 def crop(data, attrs, max_nodes):
+    for key in ['N', 'C', 'O']:
+        data.pop(key)
+        attrs.pop(key)
     if data['_n_nodes'] <= max_nodes:
         return data, attrs
     x = np.random.randint(data['_n_nodes'])
@@ -49,12 +52,7 @@ def crop(data, attrs, max_nodes):
     data['id'] = data['id'][mask]
     data['species'] = data['species'][mask]
     data['chain_id'] = data['chain_id'][mask]
-    for atom in ['N', 'CA', 'C', 'O']:
-        data[atom] = data[atom][mask]
-        
-    for key in ['N', 'C', 'O']:
-        data.pop(key)
-        attrs.pop(key)
+    data['CA'] = data['CA'][mask]
     return data, attrs
   
 def criteria(data, edge_index):
@@ -105,8 +103,8 @@ def get_config(spec=''):
     data.inverse_scaler = getScaler([('CA', ('scale', data.std))])
     data.train_val_split = "random"
     data.shuffle = True
- #   data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
-    data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
+    data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
+  #  data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
     data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
     data.key_map = {}
 

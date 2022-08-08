@@ -4,7 +4,13 @@ from e3nn import o3
 import torch
 from torch_runstats.scatter import scatter
 import math
-
+import numpy as np
+  
+def setSeed(seed):
+  torch.manual_seed(seed)
+  np.random.seed(seed)
+  torch.cuda.manual_seed_all(seed)
+  torch.backends.cudnn.deterministic = True
   
 def getScaler(operations):
   """

@@ -53,17 +53,16 @@ class SequentialGraphNetwork(torch.nn.Sequential):
             if isinstance(value, ConfigDict) or isinstance(value, dict):
                 module = build(value)
                 modules[key] = module
-                if 'jit' in config and config['jit']:
-                    module = (module, script(module))
-                else:
-                    modules[key] = module
                 self.layers += [(key, module)]
             elif callable(value):
-              #  if 'jit' in config and config['jit']:
-             #   value = torch.jit.script(value)
                 self.layers += [(key, value)]
             else:
                 raise TypeError("invalid config node")
+                
+        # must jit after intialization, since jit makes the seed different across processes
+        for i, (key, module) in enumerate(self.layers):
+            if isinstance(module, torch.nn.Module) and 'jit' in config and config['jit']:
+                self.layers[i] = (key, (module, script(module)))
 
         modules = OrderedDict(modules)
         super().__init__(modules)

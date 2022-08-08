@@ -81,7 +81,6 @@ def getDataIters(config):
   ]
   train_ds = dataset.index_select(train_idcs)
   eval_ds = dataset.index_select(val_idcs)
-
   # Build data iterators
   loader_rng = (
       torch.Generator()

@@ -83,8 +83,7 @@ def get_config(spec=''):
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
-    #config.diffusion_keys = {'CA':3, 'C':3, 'O':3, 'N':3}
-    config.diffusion_keys = {'CA':3}#, 'C':3, 'O':3, 'N':3}
+    config.diffusion_keys = {'CA':3, 'C':3, 'O':3, 'N':3}
     
     model.n_dim = 64
     model.l_max = 2
@@ -167,7 +166,7 @@ def get_config(spec=''):
               'irreps_out':(model.node_attrs, "node_attrs")})
     layer_configs.layers = insertAfter(layer_configs.layers, 'graph2node', concat)
     
-    """
+    
     concat = ('concat3', {'module': Concat,
               'node_features':(layer_configs.node_features, "node_features"),
               'C':(f"1x1o", "C"),
@@ -175,7 +174,7 @@ def get_config(spec=''):
               'O':(f"1x1o", "O"),
               'irreps_out':(layer_configs.node_features, "node_features")})
     layer_configs.layers = insertAfter(layer_configs.layers, 'layer3', concat)
-    """
+    
     
     for key in config.diffusion_keys:
         layer_configs.layers.append(

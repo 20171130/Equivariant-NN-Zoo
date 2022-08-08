@@ -18,7 +18,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import wandb
 
-from e3_layers.utils import build, pruneArgs, _countParameters, save_checkpoint, restore_checkpoint
+from e3_layers.utils import build, pruneArgs, _countParameters, save_checkpoint, restore_checkpoint, setSeed
 from e3_layers import configs
 from e3_layers.data import Batch, getDataIters, CondensedDataset
 
@@ -56,6 +56,7 @@ def train_regression(config, FLAGS):
       
   if not FLAGS.resume_from:
       model = build(config.model_config)
+      setSeed(FLAGS.seed)
       trainer = Trainer(model=model, **dict(config))
   else:
       trainer = Trainer.from_file(FLAGS.resume_from, **dict(config))
@@ -93,10 +94,11 @@ def train_diffusion(e3_config, FLAGS):
   
   # Initialize model.
   score_model = build(e3_config.model_config).to(device)
+  setSeed(FLAGS.seed) # must reset seed after JIT to keep it the same across processes
   logging.info(f'Number of parameters {_countParameters(score_model)}.')
   score_model = DDP(score_model)
   ema = ExponentialMovingAverage(score_model.parameters(), decay=sde_config.model.ema_rate)      
-        
+  
   optim = getattr(torch.optim, e3_config.optimizer_name)
   kwargs = pruneArgs(prefix="optimizer", **e3_config)
   kwargs.pop('name')
@@ -126,7 +128,6 @@ def train_diffusion(e3_config, FLAGS):
   eval_step_fn = losses.get_step_fn(sde, train=False, optimizer=optimizer,
                                     reduce_mean=reduce_mean, continuous=continuous,
                                     likelihood_weighting=likelihood_weighting)
-
   train_iter, eval_iter = getDataIters(e3_config)
   
   # Create data normalizer and its inverse
@@ -181,7 +182,7 @@ def train_diffusion(e3_config, FLAGS):
     # Save a checkpoint periodically and generate samples if needed
     if (step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps) and dist.get_rank()==0:
       # Save the checkpoint.
-      save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{step}.pth'), state)
+      save_checkpoint(os.path.join(checkpoint_dir, f'{step}.pth'), state)
       
       if len(eval_loss_lst)> 0:
         loss_dict = {}
@@ -267,9 +268,7 @@ def main(rank):
       id=wandb.util.generate_id(),
       settings=wandb.Settings(),
   )
-  torch.manual_seed(FLAGS.seed)
-  np.random.seed(FLAGS.seed)
-  
+  setSeed(FLAGS.seed)
   dist.init_process_group("nccl", rank=rank, world_size=FLAGS.world_size)
   if FLAGS.sde_config is None:
     train_regression(e3_config, FLAGS)
