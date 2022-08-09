@@ -160,18 +160,9 @@ def train_diffusion(e3_config, FLAGS):
     batch = next(train_iter).to(device)
     batch = scaler(batch)
     # Execute one training step
-    
     loss, losses = train_step_fn(state, batch)
     loss_lst.append(losses)
-    if step % FLAGS.log_period == 0 and step>0:
-      loss_dict = {}
-      for key in loss_lst[0]:
-        loss_dict[key] = sum([item[key] for item in loss_lst])/len(loss_lst)
-      logging.info("step: %d, training_loss: %.5e" % (step, loss_dict['total']))
-      loss_dict['optim_step'] = step
-      wandb.log(loss_dict)
-      loss_lst = []
-
+    
     # Report the loss on an evaluation dataset periodically
     if step % FLAGS.eval_period == 0:
       eval_batch = next(eval_iter).to(device)
@@ -179,10 +170,14 @@ def train_diffusion(e3_config, FLAGS):
       _, eval_loss = eval_step_fn(state, eval_batch)
       eval_loss_lst.append(eval_loss)
       
-    # Save a checkpoint periodically and generate samples if needed
-    if (step != 0 and step % FLAGS.save_period == 0 or step == num_train_steps) and dist.get_rank()==0:
-      # Save the checkpoint.
-      save_checkpoint(os.path.join(checkpoint_dir, f'{step}.pth'), state)
+    if step % FLAGS.log_period == 0 and step>initial_step and dist.get_rank()==0:
+      loss_dict = {}
+      for key in loss_lst[0]:
+        loss_dict[key] = sum([item[key] for item in loss_lst])/len(loss_lst)
+      logging.info("step: %d, training_loss: %.5e" % (step, loss_dict['total']))
+      loss_dict['optim_step'] = step
+      wandb.log(loss_dict)
+      loss_lst = []
       
       if len(eval_loss_lst)> 0:
         loss_dict = {}
@@ -203,19 +198,28 @@ def train_diffusion(e3_config, FLAGS):
         sample_dir = os.path.join(workdir, "samples")
         this_sample_dir = os.path.join(sample_dir, "iter_{}".format(step))
         Path(this_sample_dir).mkdir(parents=True, exist_ok=True)
-        filenmae = saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth')
-        wandb.log({'ground_truth': wandb.Molecule(filenmae), 'optim_step' : step})
+        filename = saveMol(inverse_scaler(batch), workdir=FLAGS.workdir, filename='ground_truth')
+        wandb.log({'ground_truth': wandb.Molecule(filename), 'optim_step' : step})
 
         n_samples = 1
         lst = [batch[0] for i in range(n_samples)]
-        batch = Batch.from_data_list(lst, batch.attrs).to(batch.device)
+        batch = Batch.from_data_list(lst, batch.attrs)
+        mask = torch.multinomial(torch.tensor([0.3, 0.7]), batch['CA'].shape[0], replacement=True).unsqueeze(-1)
+        for key in sde.irreps:
+          batch[f'{key}_sampling_mask'] = mask
+        batch.to(device)
         samples_batch, n = sampling_fn(score_model, batch)
         filename = f'{step}'
-        filenmae = saveMol(samples_batch, idx=0, workdir=FLAGS.workdir, filename=filename)
+        filename = saveMol(samples_batch, idx=0, workdir=FLAGS.workdir, filename=filename)
         def distMat(x):
           return torch.linalg.norm(x.unsqueeze(1) - x, dim = -1)
         error = (distMat(samples_batch['CA']) - distMat(inverse_scaler(batch)['CA'])).abs().mean()
-        wandb.log({'sample': wandb.Molecule(filenmae), 'optim_step' : step, 'error': error})
+        wandb.log({'sample': wandb.Molecule(filename), 'optim_step' : step, 'error': error})
+      
+    # Save a checkpoint periodically and generate samples if needed
+    if (step>initial_step and step % FLAGS.save_period == 0 or step == num_train_steps) and dist.get_rank()==0:
+      # Save the checkpoint.
+      save_checkpoint(os.path.join(checkpoint_dir, f'{step}.pth'), state)
 
 def main(rank):
   torch.cuda.set_device(rank)

@@ -80,7 +80,7 @@ def get_config(spec=''):
 
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
-    config.lr_scheduler_patience = 1
+    config.lr_scheduler_patience = 9
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein

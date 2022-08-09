@@ -43,9 +43,23 @@ class DataLoader(torch.utils.data.DataLoader):
             **kwargs,
         )
 
-def getDataIters(config):
+def getDataIters(config, test=False):
   FLAGS = flags.FLAGS
   data_config = config.data_config
+  # Build data iterators
+  loader_rng = (
+      torch.Generator()
+  )  # used for generating seeds for each dataloader worker process
+  loader_rng.manual_seed(FLAGS.seed + dist.get_rank())
+  dl_kwargs = dict(
+      batch_size=config.batch_size,
+      num_workers=FLAGS.dataloader_num_workers,
+      pin_memory=True,
+      # avoid getting stuck
+      timeout=(300 if FLAGS.dataloader_num_workers > 0 else 0),
+      generator = loader_rng,
+      drop_last = False
+  )
   
   # splits the dataset among processes
   rank = dist.get_rank()
@@ -56,6 +70,14 @@ def getDataIters(config):
       data_config.path = data_config.path[start: end]
   dataset = CondensedDataset(**data_config)
   
+  if test:
+    dataloader = DataLoader(
+        dataset=dataset,
+        shuffle=False, 
+        **dl_kwargs,
+    )
+    return dataloader
+
   # train-val split
   total_n = len(dataset)
   n_train, n_val = data_config.n_train, data_config.n_val
@@ -81,20 +103,7 @@ def getDataIters(config):
   ]
   train_ds = dataset.index_select(train_idcs)
   eval_ds = dataset.index_select(val_idcs)
-  # Build data iterators
-  loader_rng = (
-      torch.Generator()
-  )  # used for generating seeds for each dataloader worker process
-  loader_rng.manual_seed(FLAGS.seed + dist.get_rank())
-  dl_kwargs = dict(
-      batch_size=config.batch_size,
-      num_workers=FLAGS.dataloader_num_workers,
-      pin_memory=True,
-      # avoid getting stuck
-      timeout=(300 if FLAGS.dataloader_num_workers > 0 else 0),
-      generator = loader_rng,
-      drop_last = True
-  )
+
   train_dl = DataLoader(
       dataset=train_ds,
       shuffle=True,

@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 def masked2indexed(batch):
-    data = {}
+    data = batch.data
     id = torch.arange(start=0, end=batch['_n_nodes'].item())
     mask = batch['mask'].view(-1).bool()
     data['id'] = id[mask]
@@ -17,12 +17,11 @@ def masked2indexed(batch):
     data['species'] = batch['species'][mask]
     data['chain_id'] = batch['chain_id'][mask]
 
-    attrs = {'id': ('node', '1x0e')}
+    attrs = batch.attrs
+    attrs['id'] = ('node', '1x0e')
     for atom in ['N', 'CA', 'C', 'O']:
         data[atom] = batch[atom][mask]
-        
-    attrs.update(batch.attrs)
-    return Batch(attrs, **data)
+    return batch
 
 def crop(data, attrs, max_nodes):
     if data['_n_nodes'] <= max_nodes:
@@ -79,7 +78,7 @@ def get_config(spec=''):
 
     config.optimizer_name = "Adam"
     config.lr_scheduler_name = "ReduceLROnPlateau"
-    config.lr_scheduler_patience = 1
+    config.lr_scheduler_patience = 9
     config.lr_scheduler_factor = 0.8
     config.grad_clid_norm = 1.
     config.saveMol = saveProtein
@@ -97,13 +96,19 @@ def get_config(spec=''):
     data.n_train = 0.9
     data.n_val = 0.1
     data.std = 25.83
-    data.scaler = getScaler([('O', ('shift', 'C', -1)), ('C', ('shift', 'CA', -1)), ('N', ('shift', 'CA', -1)), 
-                            ('CA', ('shift', 'mean')), (['CA', 'C', 'N', 'O'], ('scale',  1/data.std))])
-    data.inverse_scaler = getScaler([(['C', 'CA', 'N', 'O'], ('scale', data.std)), ('C', ('shift', 'CA')), ('N', ('shift', 'CA')), ('O', ('shift', 'C'))])
+    if 'scale' in spec:
+      data.scaler = getScaler([('O', ('shift', 'C', -1)), ('C', ('shift', 'CA', -1)), ('N', ('shift', 'CA', -1)), 
+                              ('CA', ('shift', 'mean')), (['CA', 'C', 'N', 'O'], ('scale',  1/data.std))])
+      data.inverse_scaler = getScaler([(['C', 'CA', 'N', 'O'], ('scale', data.std)), ('C', ('shift', 'CA')), ('N', ('shift', 'CA')), ('O', ('shift', 'C'))])
+    else:
+      data.scaler = getScaler([('O', ('shift', 'C', -1)), ('C', ('shift', 'CA', -1)), ('N', ('shift', 'CA', -1)), 
+                              ('CA', ('shift', 'mean')), ('CA', ('scale',  1/data.std))])
+      data.inverse_scaler = getScaler([('CA', ('scale', data.std)), ('C', ('shift', 'CA')), ('N', ('shift', 'CA')), ('O', ('shift', 'C'))])
     data.train_val_split = "random"
     data.shuffle = True
- #   data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
+   # data.path = [f'/mnt/vepfs/hb/protein_new/{i}' for i in range(8)]
     data.path = f'/mnt/vepfs/hb/protein_new/0/pdb_0.hdf5'
+   # data.path = f'antibody.hdf5'
     data.preprocess = [masked2indexed, partial(crop, max_nodes=384)]
     data.key_map = {}
 
